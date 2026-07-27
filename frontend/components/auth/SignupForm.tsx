@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -219,6 +220,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
       });
       setLearningGoal(user.id, goal);
       setUser(user);
+      toast.success(`Welcome to Speeky, ${user.name.split(" ")[0]}!`);
       router.push("/dashboard");
     } catch (error) {
       setOtpError(
@@ -240,6 +242,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
       await resendSignupOtp(values.email.trim());
       setResendCount((prev) => prev + 1);
       setCooldown(RESEND_COOLDOWN_SECONDS);
+      toast.success("Verification code resent.");
     } catch (error) {
       setOtpError(
         error instanceof ApiError

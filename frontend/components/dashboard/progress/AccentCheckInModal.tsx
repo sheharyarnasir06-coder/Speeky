@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { toast } from "react-toastify";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { ApiError } from "@/lib/api";
@@ -50,6 +51,7 @@ export function AccentCheckInModal({ open, onClose, onSuccess }: AccentCheckInMo
       await submitAccentAssessment(scores);
       setScores(DEFAULT_SCORES);
       onSuccess();
+      toast.success("Accent check-in logged.");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
     } finally {

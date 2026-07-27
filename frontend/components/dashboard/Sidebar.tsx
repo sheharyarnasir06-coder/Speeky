@@ -3,10 +3,11 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { ClipboardList, ShieldCheck } from "lucide-react";
 import { cn, getInitials } from "@/lib/utils";
 import { DASHBOARD_NAV_LINKS } from "@/lib/dashboard-data";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { API_ORIGIN } from "@/lib/api";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -17,6 +18,17 @@ const ROLE_LABELS: Record<string, string> = {
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
+  const { access } = useAssessmentAccess();
+
+  // Persistent entry to the baseline assessment for anyone who hasn't completed it.
+  // Without this the ONLY path was the throttled AssessmentReminderBanner overlay, which
+  // is suppressed for an hour right after a skip — so a user who skipped (or backed out
+  // mid-assessment) had no way back until it reappeared. A permanent nav item is
+  // discoverable regardless of the prompt throttle.
+  const showAssessmentLink =
+    access != null &&
+    access.assessment_status !== "COMPLETED" &&
+    access.assessment_status !== "PLATEAUED";
 
   return (
     <aside className="flex w-[4.5rem] shrink-0 flex-col items-center border-r border-border bg-surface-elevated px-2 py-6 lg:w-64 lg:items-stretch lg:px-4">
@@ -63,6 +75,22 @@ export function Sidebar() {
             </Link>
           );
         })}
+        {showAssessmentLink ? (
+          <Link
+            href="/dashboard/assessment"
+            aria-label="Baseline Assessment"
+            title="Baseline Assessment"
+            className={cn(
+              "flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
+              pathname === "/dashboard/assessment"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-surface hover:text-foreground",
+            )}
+          >
+            <ClipboardList className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="hidden lg:inline">Assessment</span>
+          </Link>
+        ) : null}
         {user?.role === "ADMIN" ? (
           <Link
             href="/dashboard/admin/scenarios"

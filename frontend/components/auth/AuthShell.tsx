@@ -3,10 +3,12 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { ArrowLeft } from "lucide-react";
+import { LegalModal } from "@/components/common/LegalModal";
+import { VoiceWave } from "@/components/common/VoiceWave";
 import { TESTIMONIALS } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
-import { LegalModal } from "@/components/common/LegalModal";
 
 interface AuthShellProps {
   eyebrow: string;
@@ -32,16 +34,15 @@ export function AuthShell({
   );
 
   React.useEffect(() => {
-    const interval = setInterval(() => {
+    const interval = window.setInterval(() => {
       setFade(false);
-
-      setTimeout(() => {
+      window.setTimeout(() => {
         setQuoteIndex((prev) => (prev + 1) % TESTIMONIALS.length);
         setFade(true);
-      }, 500);
+      }, 350);
     }, 8000);
 
-    return () => clearInterval(interval);
+    return () => window.clearInterval(interval);
   }, []);
 
   const currentQuote = TESTIMONIALS[quoteIndex];
@@ -69,13 +70,26 @@ export function AuthShell({
   );
 
   return (
-    <div className="flex min-h-screen flex-col lg:flex-row">
-      {/* Changed text-primary-foreground to text-white to enforce visibility on dark backgrounds */}
-      <div className="animate-gradient-shift relative hidden flex-col overflow-hidden bg-gradient-to-br from-primary via-[#1D3B8A] to-[#00113D] bg-[length:200%_200%] px-12 py-10 text-white lg:flex lg:w-1/2">
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-background lg:flex-row">
+      <Link
+        href="/"
+        className="absolute left-5 top-5 z-20 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-xs font-medium text-muted-foreground opacity-60 backdrop-blur transition hover:opacity-100"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+        Back to home
+      </Link>
+
+      <div className="relative hidden flex-col overflow-hidden border-r border-border bg-surface px-12 py-10 lg:flex lg:w-1/2">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_50%_at_20%_0%,hsl(var(--accent)/0.35)_0%,transparent_60%)]"
+          className="pointer-events-none absolute left-[-8rem] top-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl dark:bg-accent/10"
         />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-[-10rem] right-[-10rem] h-96 w-96 rounded-full bg-accent/10 blur-3xl dark:bg-primary/10"
+        />
+        <VoiceWave compact className="bottom-24 opacity-35 dark:opacity-45" />
+
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-10 text-center">
           <Link href="/" className="inline-flex items-center">
             <Image
@@ -83,7 +97,8 @@ export function AuthShell({
               alt="Speeky"
               width={213}
               height={239}
-              className="h-24 w-auto brightness-0 invert"
+              className="h-24 w-auto dark:brightness-0 dark:invert"
+              priority
             />
           </Link>
 
@@ -93,50 +108,56 @@ export function AuthShell({
               fade ? "opacity-100" : "opacity-0",
             )}
           >
-            <p className="font-serif text-3xl leading-snug text-white">
+            <p className="font-serif text-3xl leading-snug text-foreground">
               &ldquo;{currentQuote.quote}&rdquo;
             </p>
-            <p className="text-sm text-white/80">
+            <p className="text-sm text-muted-foreground">
               {currentQuote.name} &middot; {currentQuote.role}
             </p>
           </div>
         </div>
-        <p className="relative z-10 text-center text-xs text-white/60">
+
+        <p className="relative z-10 text-center text-xs text-muted-foreground">
           &copy; {new Date().getFullYear()} Speeky. Built for Mazik Global.
         </p>
       </div>
 
-      <div className="flex w-full flex-1 flex-col justify-center px-6 py-12 sm:px-12 lg:w-1/2 lg:px-16">
-        <div className="mx-auto flex w-full max-w-sm flex-col gap-8">
+      <div className="relative flex w-full flex-1 flex-col justify-center px-6 py-20 sm:px-12 lg:w-1/2 lg:px-16">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-[-8rem] top-[-8rem] h-72 w-72 rounded-full bg-secondary blur-3xl dark:bg-accent/10"
+        />
+        <div className="relative mx-auto flex w-full max-w-sm flex-col gap-8">
           <Link href="/" className="inline-flex items-center lg:hidden">
             <Image
               src="/logo-full.png"
               alt="Speeky"
               width={142}
               height={159}
-              className="h-9 w-auto"
+              className="h-9 w-auto dark:brightness-0 dark:invert"
+              priority
             />
           </Link>
+
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-primary">{eyebrow}</span>
             <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
               {title}
             </h1>
-            <p className="text-sm text-muted-foreground">{description}</p>
+            <p className="text-sm leading-6 text-muted-foreground">{description}</p>
           </div>
+
           {children}
-          <div className="flex flex-col gap-4 border-t border-border pt-6 text-center text-xs text-muted-foreground">
-            {footer}
+
+          <div className="text-center text-sm text-muted-foreground">{footer}</div>
+
+          <div className="text-center text-xs leading-5 text-muted-foreground">
             {legalNote ?? defaultLegalNote}
           </div>
         </div>
       </div>
 
-      <LegalModal
-        open={!!legalType}
-        onClose={() => setLegalType(null)}
-        type={legalType}
-      />
+      <LegalModal type={legalType} open={legalType !== null} onClose={() => setLegalType(null)} />
     </div>
   );
 }

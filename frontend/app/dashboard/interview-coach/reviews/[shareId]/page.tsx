@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useParams } from "next/navigation";
+import { toast } from "react-toastify";
 import { Flag, Info, MessageSquare, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
@@ -43,8 +44,9 @@ export default function PeerReviewPage() {
     try {
       await reportComment(commentId);
       refresh();
+      toast.success("Comment reported.");
     } catch {
-      // Non-critical.
+      toast.error("Couldn't report this comment. Try again.");
     }
   }
 

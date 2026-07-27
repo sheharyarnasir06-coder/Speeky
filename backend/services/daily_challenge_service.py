@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
 from fastapi import Depends, File, Form, UploadFile
+from fastapi.responses import JSONResponse
 
 from lib import kv_store, prosody_engine, recording_engine
 from lib.audio_io import AudioDecodeError
@@ -291,3 +292,66 @@ async def review_session(payload: ReviewSessionRequest, _admin_id: str = Depends
 
 async def get_streak(user_id: str = Depends(require_auth)):
     return await _get_streak(user_id)
+
+
+# ── PDG-US-11 status + PDG-US-13 in-app reminder (merged from the streak feature) ─────
+# These read the SAME kv streak store the US-168 flow above writes (STREAKS_NS via
+# _get_streak_raw) — the parallel User.currentStreak columns from the other branch are NOT
+# used, so streak state has one source of truth.
+NOTIFY_HOUR = 18  # 6:00 PM local — PDG-US-13 trigger
+
+
+def _parse_local_date(d: str) -> Optional[date]:
+    try:
+        return date.fromisoformat(d)
+    except (ValueError, TypeError):
+        return None
+
+
+def _next_milestone(streak: int) -> Optional[int]:
+    for d in STREAK_MILESTONE_DAYS:
+        if streak < d:
+            return d
+    return None
+
+
+def _streak_view(raw: Dict, today: date):
+    """Derive (completed_today, alive_streak) from the kv streak's qualified_dates."""
+    qualified = set(raw.get("qualified_dates", []))
+    completed_today = today.isoformat() in qualified
+    alive = completed_today or (today - timedelta(days=1)).isoformat() in qualified
+    return completed_today, (raw.get("current_streak", 0) if alive else 0)
+
+
+async def get_challenge_status(local_date: str, user_id: str = Depends(require_auth)):
+    """PDG-US-11 status for the dashboard card / navbar streak icon."""
+    today = _parse_local_date(local_date)
+    if today is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid local_date"})
+    raw = await _get_streak_raw(user_id)
+    completed_today, current = _streak_view(raw, today)
+    longest = raw.get("longest_streak", 0)
+    return {
+        "completed_today": completed_today,
+        "current_streak": current,
+        "longest_streak": longest,
+        "badges": [d for d in STREAK_MILESTONE_DAYS if longest >= d],
+        "next_milestone": _next_milestone(current),
+        "required_minutes": DAILY_CHALLENGE_MIN_DURATION_SECONDS // 60,
+    }
+
+
+async def get_notification(local_date: str, local_hour: int, user_id: str = Depends(require_auth)):
+    """PDG-US-13 in-app Streak-Warning decision: not done today, past 6 PM local, live streak."""
+    today = _parse_local_date(local_date)
+    if today is None:
+        return JSONResponse(status_code=400, content={"error": "Invalid local_date"})
+    raw = await _get_streak_raw(user_id)
+    completed_today, streak = _streak_view(raw, today)
+    show = (not completed_today) and local_hour >= NOTIFY_HOUR and streak > 0
+    message = (
+        f"Don't lose your {streak}-day streak! 5 minutes of practice is all it takes."
+        if show
+        else None
+    )
+    return {"show_streak_warning": show, "current_streak": streak, "message": message}

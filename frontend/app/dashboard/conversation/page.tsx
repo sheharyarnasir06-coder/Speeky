@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
 import { Lock, MessagesSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,7 +28,7 @@ export default function ConversationPage() {
     if (!isUnlocked) return;
     listTopics()
       .then((data) => setTopics(data.topics))
-      .catch(() => {});
+      .catch(() => toast.error("Couldn't load conversation topics."));
   }, [isUnlocked]);
 
   async function handleStart() {

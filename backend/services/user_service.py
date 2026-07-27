@@ -12,8 +12,18 @@ from starlette.concurrency import run_in_threadpool
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin, require_auth
 from prisma.enums import Role
-from prisma.types import UserUpdateInput
-from schemas.user_schemas import DeleteAccountSchema, UpdateProfileSchema, UpdateRoleSchema
+from schemas.user_schemas import (
+    DeleteAccountSchema,
+    RequestEmailChangeSchema,
+    AccentPreferenceSchema,
+    UpdateProfileSchema,
+    UpdateAccentPreferenceSchema,
+    UpdateRoleSchema,
+    VerifyEmailChangeSchema,
+)
+from services import otp_service
+from services.accent_calibration_service import get_user_accent_preference, update_user_accent_preference
+from utils.email_utils import send_email_change_otp
 from utils.jwt_utils import get_access_cookie_options, get_refresh_cookie_options
 
 AVATAR_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "avatars")
@@ -42,17 +52,68 @@ async def get_profile(user_id: str = Depends(require_auth)):
     return {"user": _serialize(user)}
 
 async def update_profile(payload: UpdateProfileSchema, user_id: str = Depends(require_auth)):
-    data: UserUpdateInput = {}
-    if payload.name is not None:
-        data["name"] = payload.name
-    if payload.email is not None:
-        existing = await db.user.find_unique(where={"email": payload.email})
-        if existing and existing.id != user_id:
-            return JSONResponse(status_code=409, content={"error": "Email already registered"})
-        data["email"] = payload.email
-
-    user = await db.user.update(where={"id": user_id}, data=data)
+    user = await db.user.update(where={"id": user_id}, data={"name": payload.name})
     return {"user": _serialize(user)}
+
+
+# ── Email change (OTP-gated) ─────────────────────────────────────────────────
+async def request_email_change(
+    payload: RequestEmailChangeSchema, user_id: str = Depends(require_auth)
+):
+    user = await db.user.find_unique(where={"id": user_id})
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    if payload.email == user.email:
+        return JSONResponse(
+            status_code=400, content={"error": "That's already your email address"}
+        )
+
+    existing = await db.user.find_unique(where={"email": payload.email})
+    if existing:
+        return JSONResponse(status_code=409, content={"error": "Email already registered"})
+
+    code = await otp_service.create_pending_email_change(user_id, payload.email)
+    await send_email_change_otp(payload.email, code)
+    return {"message": "A verification code has been sent to your new email address."}
+
+
+async def verify_email_change(
+    payload: VerifyEmailChangeSchema, user_id: str = Depends(require_auth)
+):
+    new_email = await otp_service.verify_pending_email_change(user_id, payload.code)
+    if not new_email:
+        return JSONResponse(
+            status_code=400, content={"error": "Invalid or expired verification code"}
+        )
+
+    # Re-check: the address may have been claimed elsewhere while this code was pending
+    existing = await db.user.find_unique(where={"email": new_email})
+    if existing and existing.id != user_id:
+        return JSONResponse(status_code=409, content={"error": "Email already registered"})
+
+    user = await db.user.update(where={"id": user_id}, data={"email": new_email})
+    await otp_service.clear_pending_email_change(user_id)
+    return {"user": _serialize(user)}
+
+async def get_accent_preference(user_id: str = Depends(require_auth)):
+    pref, sub_dialect, notice = await get_user_accent_preference(user_id)
+    return AccentPreferenceSchema(
+        accent_model_preference=pref,
+        sub_dialect_preference=sub_dialect,
+        notice=notice,
+    )
+
+async def set_accent_preference(payload: UpdateAccentPreferenceSchema, user_id: str = Depends(require_auth)):
+    pref, sub_dialect, notice = await update_user_accent_preference(
+        user_id, payload.accent_model_preference, payload.sub_dialect_preference
+    )
+    return AccentPreferenceSchema(
+        accent_model_preference=pref,
+        sub_dialect_preference=sub_dialect,
+        notice=notice,
+    )
+
+
 
 def _process_avatar(contents: bytes) -> bytes:
     """

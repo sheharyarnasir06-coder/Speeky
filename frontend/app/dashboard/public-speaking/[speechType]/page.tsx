@@ -12,8 +12,19 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { FillerWordsScorecardSection } from "@/components/dashboard/public-speaking/FillerWordsScorecardSection";
+import { ApiError } from "@/lib/api";
+import {
+  startPublicSpeakingSession,
+  submitPublicSpeakingTurn,
+  submitPublicSpeakingQa,
+  getPublicSpeakingVoiceToken,
+  type SpeechType,
+} from "@/lib/publicSpeaking";
+import { useLiveKitVoice, type VoiceFeatures } from "@/lib/useLiveKitVoice";
 
 const SPEECH_TYPE_CONFIG: Record<string, { label: string; description: string; ideal_wpm: string }> = {
   business_pitch: {
@@ -50,7 +61,6 @@ export default function PublicSpeakingSessionPage() {
   const config = SPEECH_TYPE_CONFIG[speechType] || SPEECH_TYPE_CONFIG.business_pitch;
 
   const [inputMode, setInputMode] = React.useState<"audio" | "text">("audio");
-  const [isRecording, setIsRecording] = React.useState(false);
   const [textContent, setTextContent] = React.useState("");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [sessionId, setSessionId] = React.useState<string | null>(null);
@@ -60,37 +70,77 @@ export default function PublicSpeakingSessionPage() {
   const [qaScore, setQaScore] = React.useState<any>(null);
   const [error, setError] = React.useState<string | null>(null);
 
-  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const audioChunksRef = React.useRef<Blob[]>([]);
-  const audioBase64Ref = React.useRef<string | null>(null);
-  const [hasRecording, setHasRecording] = React.useState(false);
+  // Shared LiveKit voice pipeline (same as Conversation / Baseline). The voice_agent
+  // worker transcribes and pushes text over the data channel; we accumulate it into the
+  // answer box (so nothing truncates across pauses) and measure spoken duration for WPM.
+  const sessionIdRef = React.useRef<string | null>(null);
+  sessionIdRef.current = sessionId;
+  const voiceStartedAt = React.useRef<number | null>(null);
+  const voiceDurationRef = React.useRef<number>(0);
+  // Full-mode acoustic features accumulated across VAD utterances (word timings appended,
+  // speech duration summed, prosody/level kept). Sent with the turn so the backend scores
+  // real tone/clarity instead of proxies.
+  const featuresRef = React.useRef({
+    has: false,
+    word_timings: [] as { word: string; start: number; end: number }[],
+    duration_seconds: 0,
+    avg_db: undefined as number | undefined,
+    pitch_range_semitones: 0,
+  });
+  const fetchVoiceToken = React.useCallback(() => {
+    const id = sessionIdRef.current;
+    if (!id) return Promise.reject(new Error("No active session"));
+    return getPublicSpeakingVoiceToken(id);
+  }, []);
+  const {
+    isVoiceActive,
+    isConnectingVoice,
+    isStoppingVoice,
+    voiceStatus,
+    error: voiceError,
+    startVoice,
+    stopVoice,
+  } = useLiveKitVoice(fetchVoiceToken, (text, features?: VoiceFeatures) => {
+    setTextContent((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+    if (features) {
+      const acc = featuresRef.current;
+      if (features.word_timings) acc.word_timings.push(...features.word_timings);
+      if (typeof features.duration_seconds === "number") acc.duration_seconds += features.duration_seconds;
+      if (typeof features.avg_db === "number") acc.avg_db = features.avg_db;
+      if (typeof features.pitch_range_semitones === "number")
+        acc.pitch_range_semitones = Math.max(acc.pitch_range_semitones, features.pitch_range_semitones);
+      acc.has = true;
+    }
+  });
+  const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
+    featureName: "Public Speaking Practice",
+  });
 
-  function blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve((reader.result as string).split(",")[1] ?? "");
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
+  const handleStartVoice = async () => {
+    if (isVoiceActive) return;
+    voiceStartedAt.current = performance.now();
+    await startVoice();
+  };
+
+  const handleStopVoice = async () => {
+    await stopVoice();
+    if (voiceStartedAt.current != null) {
+      voiceDurationRef.current += (performance.now() - voiceStartedAt.current) / 1000;
+      voiceStartedAt.current = null;
+    }
+  };
 
   const handleStartSession = async () => {
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch("/api/public-speaking/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          speech_type: speechType,
-          input_mode: inputMode,
-        }),
+      const data = await startPublicSpeakingSession({
+        speech_type: speechType as SpeechType,
+        input_mode: inputMode,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to start session");
       setSessionId(data.session_id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start session");
+      setError(err instanceof ApiError ? err.message : "Failed to start session");
     } finally {
       setIsSubmitting(false);
     }
@@ -98,30 +148,42 @@ export default function PublicSpeakingSessionPage() {
 
   const handleSubmitSpeech = async () => {
     if (!sessionId) return;
-    if (inputMode === "audio" && !audioBase64Ref.current) {
-      setError("Record your speech before submitting.");
+    if (isVoiceActive) await handleStopVoice();
+    const content = textContent.trim();
+    if (!content) {
+      setError(
+        inputMode === "audio"
+          ? "Record your speech before submitting."
+          : "Enter your speech before submitting.",
+      );
       return;
     }
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch(`/api/public-speaking/${sessionId}/turn`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audio_data: inputMode === "audio" ? audioBase64Ref.current : null,
-          text_content: inputMode === "text" ? textContent : null,
-          is_final: true,
-        }),
+      const f = featuresRef.current;
+      const data = await submitPublicSpeakingTurn(sessionId, {
+        text_content: content,
+        duration_seconds:
+          inputMode === "audio"
+            ? Math.max(1, f.duration_seconds || voiceDurationRef.current)
+            : null,
+        audio_features: f.has
+          ? {
+              word_timings: f.word_timings,
+              avg_db: f.avg_db,
+              pitch_range_semitones: f.pitch_range_semitones,
+              duration_seconds: f.duration_seconds,
+            }
+          : undefined,
+        is_final: true,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to submit speech");
       setScorecard(data.scorecard);
       if (data.qa_triggered) {
-        setQaQuestion(data.ai_question);
+        setQaQuestion(data.ai_question ?? null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit speech");
+      setError(err instanceof ApiError ? err.message : "Failed to submit speech");
     } finally {
       setIsSubmitting(false);
     }
@@ -132,57 +194,21 @@ export default function PublicSpeakingSessionPage() {
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch(`/api/public-speaking/${sessionId}/qa`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audio_data: null,
-          text_content: qaResponse,
-        }),
+      const data = await submitPublicSpeakingQa(sessionId, {
+        audio_data: null,
+        text_content: qaResponse,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to submit Q&A response");
       setQaScore(data.qa_score);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit Q&A response");
+      setError(err instanceof ApiError ? err.message : "Failed to submit Q&A response");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleToggleRecording = async () => {
-    if (isRecording) {
-      mediaRecorderRef.current?.stop();
-      setIsRecording(false);
-      return;
-    }
-    setError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        audioBase64Ref.current = await blobToBase64(blob);
-        setHasRecording(true);
-      };
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setHasRecording(false);
-      setIsRecording(true);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Microphone permission denied.",
-      );
-    }
-  };
-
   return (
     <div className="flex flex-col gap-6">
+      {gate}
       <div className="flex items-center gap-4">
         <Button
           variant="ghost"
@@ -258,7 +284,11 @@ export default function PublicSpeakingSessionPage() {
           </div>
 
           <Button
-            onClick={handleStartSession}
+          onClick={
+            inputMode === "audio"
+              ? () => void runWithVoiceReadiness(handleStartSession)
+              : handleStartSession
+          }
             disabled={isSubmitting}
             className="w-full"
           >
@@ -277,26 +307,43 @@ export default function PublicSpeakingSessionPage() {
           </div>
 
           {inputMode === "audio" ? (
-            <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed border-border p-8">
-              <button
-                onClick={handleToggleRecording}
-                className={cn(
-                  "flex h-20 w-20 items-center justify-center rounded-full transition-all",
-                  isRecording
-                    ? "bg-danger text-white animate-pulse"
-                    : "bg-primary text-white hover:scale-110"
-                )}
-              >
-                <Mic className="h-10 w-10" />
-              </button>
-              <div className="text-center">
-                <div className="font-medium text-foreground">
-                  {isRecording ? "Recording..." : "Tap to Record"}
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {isRecording ? "Speak clearly" : "Ready when you are"}
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-border p-6">
+                <button
+                  onClick={isVoiceActive ? handleStopVoice : () => void runWithVoiceReadiness(handleStartVoice)}
+                  disabled={isConnectingVoice || isStoppingVoice}
+                  className={cn(
+                    "flex h-20 w-20 items-center justify-center rounded-full transition-all disabled:opacity-60",
+                    isVoiceActive
+                      ? "bg-danger text-white animate-pulse"
+                      : "bg-primary text-white hover:scale-110",
+                  )}
+                >
+                  <Mic className="h-10 w-10" />
+                </button>
+                <div className="text-center">
+                  <div className="font-medium text-foreground">
+                    {isConnectingVoice
+                      ? "Connecting..."
+                      : isVoiceActive
+                        ? "Recording — tap to stop"
+                        : "Tap to Record"}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {voiceStatus || "We transcribe as you speak — review below before submitting."}
+                  </div>
                 </div>
               </div>
+              <Textarea
+                label="Transcript (editable)"
+                value={textContent}
+                onChange={(e) => setTextContent(e.target.value)}
+                placeholder="Your spoken words appear here..."
+                rows={6}
+              />
+              {voiceError ? (
+                <p className="text-sm text-danger">{voiceError}</p>
+              ) : null}
             </div>
           ) : (
             <Textarea
@@ -310,11 +357,7 @@ export default function PublicSpeakingSessionPage() {
 
           <Button
             onClick={handleSubmitSpeech}
-            disabled={
-              isSubmitting ||
-              isRecording ||
-              (inputMode === "text" ? !textContent.trim() : !hasRecording)
-            }
+            disabled={isSubmitting || isVoiceActive || !textContent.trim()}
             className="w-full"
           >
             {isSubmitting ? "Analyzing..." : "Submit for Analysis"}
@@ -348,17 +391,8 @@ export default function PublicSpeakingSessionPage() {
             </div>
           </div>
 
-          {scorecard.filler_word_count > 0 && (
-            <div className="rounded-lg bg-warning/10 border border-warning/20 p-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-warning-foreground">
-                <AlertCircle className="h-4 w-4" />
-                <span>Filler Words: {scorecard.filler_word_count}</span>
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Try pausing silently instead of using "um" or "ah".
-              </p>
-            </div>
-          )}
+          {sessionId && <FillerWordsScorecardSection sessionId={sessionId} />}
+
 
           <div className="rounded-lg bg-secondary/20 p-4">
             <div className="flex items-start gap-3">

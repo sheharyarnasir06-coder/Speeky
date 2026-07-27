@@ -16,6 +16,11 @@ export interface VoiceTokenResult {
   room: string;
 }
 
+export interface AudioFeatures {
+  duration_seconds: number;
+  word_timings: { word: string; start: number; end: number }[];
+}
+
 // Ceiling for how long stopVoice() waits for an in-flight transcript before giving up
 // and disconnecting anyway — matches the product's stated max latency budget.
 const STOP_WAIT_MS = 15000;
@@ -28,9 +33,18 @@ const STOP_WAIT_MS = 15000;
  * inline in the Conversation session page, generalized for Scenarios/Coaching/Interview
  * Coach to reuse.
  */
+// Full-mode acoustic features the voice_agent attaches to a transcript (word timings +
+// prosody + level). Undefined in transcript mode. Shape mirrors voice_agent/agent.py.
+export interface VoiceFeatures {
+  word_timings?: { word: string; start: number; end: number }[];
+  duration_seconds?: number;
+  avg_db?: number;
+  pitch_range_semitones?: number;
+}
+
 export function useLiveKitVoice(
   fetchToken: () => Promise<VoiceTokenResult>,
-  onTranscript: (text: string) => void,
+  onTranscript: (text: string, features?: AudioFeatures | VoiceFeatures) => void,
 ) {
   const [isVoiceActive, setIsVoiceActive] = React.useState(false);
   const [isConnectingVoice, setIsConnectingVoice] = React.useState(false);
@@ -49,6 +63,9 @@ export function useLiveKitVoice(
   // Set by stopVoice() while it's waiting; the DataReceived handler resolves it early
   // the moment the transcript it's waiting for actually arrives.
   const pendingStopResolveRef = React.useRef<(() => void) | null>(null);
+  // Stores the audio features from the most recent transcript — caller reads this
+  // via getLastAudioFeatures() before clearing it on message send.
+  const lastAudioFeaturesRef = React.useRef<AudioFeatures | null>(null);
 
   const startVoice = React.useCallback(async () => {
     if (roomRef.current) return;
@@ -100,7 +117,27 @@ export function useLiveKitVoice(
           utteranceInFlightRef.current = false;
           pendingStopResolveRef.current?.();
           if (!text) return;
-          onTranscriptRef.current(text);
+
+          // voice_agent/agent.py sends either:
+          //   full mode:    { text, features: { word_timings, duration_seconds, ... } }
+          //   simple mode:  { text, duration_seconds, word_timings }  (flat, no "features" key)
+          // Normalize both into one `features` object so callers get a consistent shape.
+          const features: VoiceFeatures | AudioFeatures | undefined = data.features ?? (
+            typeof data.duration_seconds === "number" && Array.isArray(data.word_timings)
+              ? { duration_seconds: data.duration_seconds, word_timings: data.word_timings }
+              : undefined
+          );
+
+          lastAudioFeaturesRef.current =
+            features && Array.isArray((features as AudioFeatures).word_timings) &&
+            typeof (features as AudioFeatures).duration_seconds === "number"
+              ? {
+                  duration_seconds: (features as AudioFeatures).duration_seconds,
+                  word_timings: (features as AudioFeatures).word_timings,
+                }
+              : null;
+
+          onTranscriptRef.current(text, features);
           setVoiceStatus("Heard you — review and hit Send.");
         } catch (err) {
           console.error("Failed to parse voice data payload:", err);
@@ -215,6 +252,12 @@ export function useLiveKitVoice(
     };
   }, []);
 
+  const getLastAudioFeatures = React.useCallback((): AudioFeatures | null => {
+    const features = lastAudioFeaturesRef.current;
+    lastAudioFeaturesRef.current = null; // consume once — clear after reading
+    return features;
+  }, []);
+
   return {
     isVoiceActive,
     isConnectingVoice,
@@ -223,5 +266,6 @@ export function useLiveKitVoice(
     error,
     startVoice,
     stopVoice,
+    getLastAudioFeatures,
   };
 }

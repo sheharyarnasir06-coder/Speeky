@@ -203,6 +203,34 @@ async def send_otp_email(to: str, code: str) -> None:
         print(f"[DEV] OTP code for {to}: {code}")
 
 
+async def send_email_change_otp(to: str, code: str) -> None:
+    ttl = os.environ.get("OTP_TTL_MINUTES", "10")
+
+    body_html = f"""
+    <p>Hello,</p>
+    <p>Use the verification code below to confirm this new email address for your Speeky AI account.</p>
+    <div class="otp-code">{code}</div>
+    <div class="security-notice">
+        <p><strong>Note:</strong> This code expires in <strong>{ttl} minutes</strong>. Your current email stays active until this is confirmed. Never share this code with anyone.</p>
+    </div>
+    """
+
+    await _send_email(
+        to=to,
+        subject="Confirm your new Speeky AI email address",
+        heading="Confirm Your New Email",
+        body_html=body_html,
+        text_body=(
+            f"Your Speeky AI email-change verification code is: {code}\n\n"
+            f"This code expires in {ttl} minutes. Your current email stays active until "
+            "this is confirmed. Never share it with anyone."
+        ),
+    )
+
+    if os.environ.get("NODE_ENV") != "production":
+        print(f"[DEV] Email-change OTP code for {to}: {code}")
+
+
 async def send_password_reset_email(to: str, reset_url: str) -> None:
     ttl = os.environ.get("RESET_TOKEN_TTL_MINUTES", "15")
 

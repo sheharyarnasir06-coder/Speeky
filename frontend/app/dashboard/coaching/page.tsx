@@ -13,6 +13,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { getCoachingScenarios, type CoachingScenarioMeta } from "@/lib/coaching";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
+import { CodeSwitchWordsCard } from "@/components/dashboard/CodeSwitchWordsCard";
 import { cn } from "@/lib/utils";
 
 const SCENARIO_ICONS: Record<string, typeof Mail> = {
@@ -111,6 +112,8 @@ export default function CoachingPage() {
           );
         })}
       </div>
+
+      {isUnlocked ? <CodeSwitchWordsCard /> : null}
     </div>
   );
 }

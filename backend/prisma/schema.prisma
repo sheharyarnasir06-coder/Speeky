@@ -64,6 +64,7 @@ enum AccentAssessmentStatus {
   REJECTED_TOO_NOISY
   REJECTED_INCOMPLETE
   REJECTED_MULTIPLE_VOICES
+  REJECTED_DISTORTION
 }
 
 // Public Speaking Coach speech types (PSC-US-01, PSC-US-03, PSC-US-04, PSC-US-05, PSC-US-06, PSC-US-07)
@@ -79,16 +80,16 @@ enum AccentAssessmentStatus {
 // Values: in_progress, completed, qa_phase
 
 model User {
-  id                     String                    @id @default(cuid())
-  email                  String                    @unique
+  id                     String                   @id @default(cuid())
+  email                  String                   @unique
   password               String
   name                   String
-  avatarUrl              String                    @default("user.webp")
-  role                   Role                      @default(USER)
-  assessmentStatus       AssessmentStatus          @default(UNASSESSED)
+  avatarUrl              String                   @default("user.webp")
+  role                   Role                     @default(USER)
+  assessmentStatus       AssessmentStatus         @default(UNASSESSED)
   learningLevel          LearningLevel?
-  createdAt              DateTime                  @default(now())
-  updatedAt              DateTime                  @updatedAt
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
   passwordResetTokens    PasswordResetToken[]
   refreshTokens          RefreshToken[]
   baselineAssessments    BaselineAssessment[]
@@ -101,6 +102,17 @@ model User {
   accentProfiles         AccentProfile[]
   vocabularyProgress     VocabularyWordProgress[]
   publicSpeakingSessions PublicSpeakingSession[]
+  // US-80/US-90/ACC-US-09: Live Speech Verification & Local Accent Calibration (Sub-Dialects)
+  livenessFlags          LivenessFlag[]
+  accentModelPreference  String                   @default("generic_global")
+  subDialectPreference   String?
+  livenessFlagCount      Int                      @default(0)
+  isAccentSuspended      Boolean                  @default(false)
+  codeSwitchWords        CodeSwitchWord[]
+  // PSA-US-05/08: Rewrite vocabulary mastery + spoken script-practice history.
+  rewriteVocab           RewriteVocabWord[]
+  scriptPracticeSessions ScriptPracticeSession[]
+  scriptPracticeHistory  ScriptPracticeHistory[]
 
   // PDG-US-15: lifetime cumulative practice time (seconds) credited via
   // practice_time_service pings, and the milestone-hour thresholds already
@@ -108,7 +120,35 @@ model User {
   lifetimePracticeSeconds Float @default(0)
   unlockedMilestoneHours  Int[] @default([])
 
+  // PDG-US-11: Daily Challenge streak. lastChallengeDate is the LOCAL calendar date
+  // (YYYY-MM-DD, from the session's start time) of the last qualifying completion — stored
+  // as a string so day-boundary math is timezone-honest without a stored offset. streakBadges
+  // holds the day-milestones already awarded (7, 30) so a repeat crossing doesn't re-award.
+  currentStreak     Int      @default(0)
+  longestStreak     Int      @default(0)
+  lastChallengeDate String?
+  streakBadges      Int[]    @default([])
+
   @@map("users")
+}
+
+// CSC-US-01: personalized "common code-switch words" list. One row per (userId, word) —
+// a repeat use UPDATES the row (count++ / lastSeenAt), never appends a duplicate, so the
+// practice tracker shows each trouble-word once with its frequency. Populated from the
+// code_switch flags Workplace Coaching already produces (services/code_switch_tracker.py).
+model CodeSwitchWord {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word        String // the code-switched (non-English) word, lowercased
+  suggestion  String // English equivalent surfaced to the learner
+  count       Int      @default(1) // times the learner has used this word
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([userId, word])
+  @@index([userId, lastSeenAt])
+  @@map("code_switch_words")
 }
 
 // Scenario-Based Learning session --> String (not an enum, unlike CoachingScenario) because admins can add custom
@@ -151,19 +191,93 @@ model ScenarioSession {
 // separate grading pass. needsReview flags a Mastered word that was targeted
 // again in a later session but not used (E-03 de-ranking).
 model VocabularyWordProgress {
-  id           String    @id @default(cuid())
-  userId       String
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  word         String
-  useCount     Int       @default(0)
-  status       String    @default("learning") // learning | mastered
-  needsReview  Boolean   @default(false)
-  lastUsedAt   DateTime  @default(now())
-  createdAt    DateTime  @default(now())
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word        String
+  useCount    Int      @default(0)
+  status      String   @default("learning") // learning | mastered
+  needsReview Boolean  @default(false)
+  lastUsedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@unique([userId, word])
   @@index([userId, status])
   @@map("vocabulary_word_progress")
+}
+
+// PSA-US-08 (US-160): advanced vocabulary a rewrite introduced, and whether the
+// learner later uses it naturally. Deliberately a SEPARATE table from
+// VocabularyWordProgress (PDG-US-12) so injected-but-unused words never pollute
+// that feature's Mastered/Learning drill-down. Mastery mirrors the same
+// useCount >= 3 threshold. status: introduced (0 uses) | practicing (1-2) | mastered (3+).
+// Usage is detected by scanning the learner's own existing practice sessions
+// (scenario/coaching) read-only — no writes to other features' code.
+model RewriteVocabWord {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word           String
+  useCount       Int       @default(0)
+  status         String    @default("introduced") // introduced | practicing | mastered
+  needsReview    Boolean   @default(false) // E-02: introduced but still unused -> recommend again
+  introducedFrom String? // short context blurb from the rewrite it came from
+  introducedAt   DateTime  @default(now())
+  lastUsedAt     DateTime?
+
+  @@unique([userId, word])
+  @@index([userId, status])
+  @@map("rewrite_vocab_words")
+}
+
+// PSA-US-05 (US-157): Script Practice Confidence Score. The learner reads a
+// rewrite/script aloud twice — a cold baseline, then again after practicing —
+// and we store both AI-measured confidence scores plus the gain. Confidence
+// comes from the SAME existing audio pipeline (session_scorer.score_audio_session
+// + confidence_engine), so both reads are scored on one yardstick. Isolated
+// table — no writes to any other feature.
+model ScriptPracticeSession {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scriptText         String
+  context            String?
+  status             String    @default("awaiting_baseline") // awaiting_baseline | practicing | completed
+  baselineConfidence Float?
+  baselineTranscript String?
+  baselineDuration   Float?
+  afterConfidence    Float?
+  afterTranscript    String?
+  afterDuration      Float?
+  confidenceGain     Float?
+  createdAt          DateTime  @default(now())
+  completedAt        DateTime?
+
+  @@index([userId, status])
+  @@map("script_practice_sessions")
+}
+
+// PSA-US-05 (US-157) history: one append-only row per successful Final Read
+// evaluation, so re-recording the final read preserves every prior result
+// (the live ScriptPracticeSession only holds the current baseline/after state).
+// Paginated server-side by (userId, createdAt) — never loaded whole.
+model ScriptPracticeHistory {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId          String?
+  scriptText         String
+  context            String?
+  baselineConfidence Float
+  afterConfidence    Float
+  confidenceGain     Float
+  baselineMetrics    Json     @default("{}") // {confidence, fluency, vocabulary, pronunciation}
+  afterMetrics       Json     @default("{}")
+  feedback           String?
+  createdAt          DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("script_practice_history")
 }
 
 
@@ -239,6 +353,15 @@ model BaselineAssessment {
   flagReason         String?
   startedAt          DateTime       @default(now())
   completedAt        DateTime?
+  // BAS-US-01 E-02: set when _complete_assessment's scoring step throws after all
+  // responses are already saved — completedAt stays null so the row still reads as
+  // "in progress" everywhere else, but get_results_summary uses this flag to retry
+  // scoring instead of returning a flat "not completed" 400 forever.
+  scoringFailed      Boolean        @default(false)
+  // PDG-US-10 E-03: distinct from isFlagged/flagReason (integrity checks on the
+  // responses themselves) — records when progress_dashboard_service drops an
+  // out-of-range (>100 or <0) score from the visual aggregate, for review.
+  outlierFlags       Json           @default("[]")
 
   // Every gating/reassessment/trend query filters userId then sorts or filters on completedAt
   @@index([userId, completedAt])
@@ -258,7 +381,7 @@ model PronunciationAttempt {
   transcript              String
   wordResults             Json // [{word, target_index, status, confidence}]
   overallScore            Float
-  accentProfileTag        String? // US-90 Local Accent Calibration hook (stub — not applied yet)
+  accentProfileTag        String? // US-90 Local Accent Calibration hook
   attemptCount            Int      @default(1)
   backgroundVoiceDetected Boolean  @default(false)
   disfluencyDetected      Boolean  @default(false)
@@ -405,6 +528,19 @@ model SignupOtp {
   @@map("signup_otps")
 }
 
+// Holds a pending email change until its emailed OTP (sent to the NEW address)
+// is verified — the user's real email isn't touched until then. Keyed by
+// userId (one pending change per account); re-requesting just overwrites it.
+model EmailChangeOtp {
+  userId    String   @id
+  newEmail  String
+  codeHash  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("email_change_otps")
+}
+
 // Public Speaking Coach session (PSC-US-01, PSC-US-03, PSC-US-04, PSC-US-05, PSC-US-06, PSC-US-07, PSC-US-11, PSC-US-12, PSC-US-14)
 model PublicSpeakingSession {
   id             String    @id @default(cuid())
@@ -419,9 +555,30 @@ model PublicSpeakingSession {
   aiQuestion     String? // AI-generated Q&A question (PSC-US-12)
   userQaResponse String? // User's Q&A response
   qaScore        Json? // Q&A performance evaluation
+  audioFeatures  Json? // AUDIO pipeline signal snapshot (word_timings etc.) — PSC-US-08
+  outlierFlags   Json      @default("[]") // PDG-US-10 E-03: out-of-range scorecard scores dropped from dashboard aggregates
   createdAt      DateTime  @default(now())
   completedAt    DateTime?
 
   @@index([userId, completedAt])
   @@map("public_speaking_sessions")
+}
+
+// US-80: Live Speech Verification (ACC-US-01). One row per flag raised against a user's
+// submission. Repeated flags (3+) trigger temporary suspension (isAccentSuspended on User).
+// appealed/appealPassed track the E-02 false-positive appeal workflow.
+model LivenessFlag {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passageId    String?
+  sentenceId   String?
+  promptToken  String?
+  reason       String
+  appealed     Boolean  @default(false)
+  appealPassed Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("liveness_flags")
 }

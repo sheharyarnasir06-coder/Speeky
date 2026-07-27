@@ -14,6 +14,7 @@ from services.interview_coach_service import (
     take_break,
     voice_token,
 )
+from services.filler_word_service import get_filler_words_for_interview_session
 
 router = APIRouter()
 
@@ -25,6 +26,7 @@ router.add_api_route("/sessions/{session_id}/pause", pause_session, methods=["PO
 router.add_api_route("/sessions/{session_id}/resume", resume_session, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/break", take_break, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/end", end_session, methods=["POST"])
+router.add_api_route("/sessions/{session_id}/filler-words", get_filler_words_for_interview_session, methods=["GET"])
 
 # mentor/peer review sharing
 router.add_api_route("/reviews", share_review, methods=["POST"], status_code=201)

@@ -605,6 +605,15 @@ async def submit_session(session_id: str, payload: SubmitCoachingSchema,
 
     result = build_result(scenario_key, input_mode, grader, scored, rule_flags)
 
+    # CSC-US-01: drop proper-noun false positives (E-01) from the code_switch flags and
+    # log the genuine code-switched words into the learner's practice list (TC-003). Done
+    # before the flags are persisted/returned so "Lahore" is never shown as a violation.
+    from services import code_switch_service
+
+    result["flags"] = await code_switch_service.track_from_flags(
+        user_id, result["flags"], submission
+    )
+
     status = CoachingStatus.COMPLETED
     if any(f.get("type") == "aggressive_tone" for f in result["flags"]) and scenario_key == "client_communication":
         status = CoachingStatus.ENDED_EARLY  # WEC-US-10 E-01 de-escalation cut-off

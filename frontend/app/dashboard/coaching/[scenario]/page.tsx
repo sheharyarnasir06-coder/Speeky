@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
+import { toast } from "react-toastify";
 import { CheckCircle2, Mic, MicOff, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
@@ -78,6 +80,9 @@ export default function CoachingSessionPage() {
     startVoice,
     stopVoice,
   } = useLiveKitVoice(fetchVoiceToken, onTranscript);
+  const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
+    featureName: "Coaching Session",
+  });
   React.useEffect(() => {
     if (voiceError) setError(voiceError);
   }, [voiceError]);
@@ -165,6 +170,7 @@ export default function CoachingSessionPage() {
     if (!started) {
       voiceStartedAt.current = null;
       setVoiceStatus("Voice input unavailable.");
+      toast.error("Voice input unavailable on this device/browser.");
     }
   }
 
@@ -246,6 +252,7 @@ export default function CoachingSessionPage() {
   if (step.name === "draft") {
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-6">
+        {gate}
         <div>
           <h1 className="font-serif text-2xl font-semibold text-foreground">
             {step.session.label}
@@ -278,7 +285,11 @@ export default function CoachingSessionPage() {
                 size="sm"
                 variant="outline"
                 disabled={!isSpeechSupported}
-                onClick={isListening ? handleStopDraftVoice : handleStartDraftVoice}
+                onClick={
+                  isListening
+                    ? handleStopDraftVoice
+                    : () => void runWithVoiceReadiness(handleStartDraftVoice)
+                }
               >
                 {isListening ? "Stop Voice" : "Speak Response"}
               </Button>
@@ -311,6 +322,7 @@ export default function CoachingSessionPage() {
   if (step.name === "roleplay") {
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-4">
+        {gate}
         <div className="flex items-center justify-between">
           <h1 className="font-serif text-2xl font-semibold text-foreground">
             {step.session.label}
@@ -390,7 +402,7 @@ export default function CoachingSessionPage() {
                   size="md"
                   variant="outline"
                   loading={isConnectingVoice}
-                  onClick={() => void startVoice()}
+                  onClick={() => void runWithVoiceReadiness(startVoice)}
                 >
                   <Mic className="h-4 w-4" aria-hidden="true" />
                   Start Voice
@@ -413,6 +425,7 @@ export default function CoachingSessionPage() {
   const { result } = step;
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
+      {gate}
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
         <h1 className="mt-3 font-serif text-2xl font-semibold">

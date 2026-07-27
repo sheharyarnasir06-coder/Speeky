@@ -1,5 +1,4 @@
 node_modules/
-tests/
 *.pyc
 .venv/
 .DS_Store

@@ -163,9 +163,19 @@ async def get_progress_matrix(user_id: str = Depends(require_auth)):
     # rendering blank/null data.
     locked = current is None
     days_until_unlock = None
+    unlock_message = None
     if locked:
         days_since_baseline = (datetime.now(timezone.utc) - baseline.completedAt).days
         days_until_unlock = max(0, (CURRENT_MONTH - 1) * CYCLE_DAYS - days_since_baseline)
+        # Once the chronological window has passed, time is no longer what's blocking the
+        # column — the learner simply hasn't recorded the Month 3 reading yet. Saying
+        # "unlocking in 0 days" there is the exact nonsense render E-01 exists to avoid,
+        # so the copy is built here (one source of truth, correct pluralization).
+        unlock_message = (
+            f"Data unlocking in {days_until_unlock} day{'s' if days_until_unlock != 1 else ''}"
+            if days_until_unlock > 0
+            else "Your Month 3 check-in is ready — record it to unlock this column"
+        )
 
     metrics = [_metric_row(field, label, baseline, current) for field, label in METRICS]
 
@@ -174,6 +184,7 @@ async def get_progress_matrix(user_id: str = Depends(require_auth)):
         "force_baseline": False,
         "locked": locked,
         "days_until_unlock": days_until_unlock,
+        "unlock_message": unlock_message,
         "baseline_completed_at": baseline.completedAt.isoformat(),
         "current_completed_at": current.completedAt.isoformat() if current else None,
         "metrics": metrics,

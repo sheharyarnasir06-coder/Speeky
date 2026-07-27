@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
 import { Trash2, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -52,9 +53,12 @@ export function DangerZoneSection() {
     try {
       await deleteAccount(password);
       setUser(null);
+      toast.success("Account deleted.");
       router.push("/");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong.");
+      const message = err instanceof ApiError ? err.message : "Something went wrong.";
+      setError(message);
+      toast.error(message);
       setIsDeleting(false);
     }
   }

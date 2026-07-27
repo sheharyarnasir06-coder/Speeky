@@ -7,12 +7,14 @@ import { Providers } from "./providers";
 const fraunces = localFont({
   src: "./fonts/Fraunces.ttf",
   variable: "--font-heading",
+  display: "swap",
 });
 
-// onfigure Mulish for clean, minimalist body text
+// Configure Mulish for clean, minimalist body text
 const mulish = localFont({
   src: "./fonts/Mulish.ttf",
   variable: "--font-body",
+  display: "swap",
 });
 
 export const metadata: Metadata = {

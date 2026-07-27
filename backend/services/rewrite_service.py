@@ -32,12 +32,15 @@ from schemas.rewrite_schemas import (
     GenerateRewriteResponse,
     ScoreRewriteRequest,
     ScoreRewriteResponse,
+    ValidateRewriteRequest,
+    ValidationResult,
 )
 from utils.feature_errors import InvalidSubmissionError
 
 logger = logging.getLogger(__name__)
 
 MIN_WORDS = 3  # anything shorter isn't a rewritable "response"
+MAX_GENERATION_ATTEMPTS = 2  # US-161: generate+self-check attempts (1 LLM call each)
 
 SCORE_DIMENSIONS = [
     "grammar",
@@ -48,8 +51,25 @@ SCORE_DIMENSIONS = [
 ]
 CHANGE_CATEGORIES = {"grammar", "vocabulary", "tone", "conciseness", "structure"}
 
-# US-156 E-01/E-02: below this average, the original was already strong.
+# US-159 E-01: the exact reassurance copy the story specifies for "no meaningful changes".
+NO_MEANINGFUL_CHANGES_MESSAGE = "Your original wording was already effective."
+# US-156 E-01: praise the original instead of inflating non-existent improvements.
+NO_SIGNIFICANT_IMPROVEMENT_MESSAGE = (
+    "Excellent original response — it was already effective, so little needed changing."
+)
+
+# US-156 E-01/E-02: the original was already strong only when the average is below
+# this AND no single axis clearly improved. A big win on one axis (e.g. grammar) must
+# not be diluted to "no significant improvement" by axes that legitimately stayed at 50.
 SIGNIFICANCE_THRESHOLD = 55
+SINGLE_AXIS_SIGNIFICANCE = 65
+
+
+def _is_significant(dimension_scores: List[int]) -> bool:
+    if not dimension_scores:
+        return False
+    average = sum(dimension_scores) / len(dimension_scores)
+    return average >= SIGNIFICANCE_THRESHOLD or max(dimension_scores) >= SINGLE_AXIS_SIGNIFICANCE
 
 # US-158: how each tier steers the rewrite's register/complexity.
 DIFFICULTY_GUIDANCE = {
@@ -140,57 +160,179 @@ def _offline_generate(original: str) -> str:
     return text or original
 
 
+async def _generate_and_check(
+    original: str, context: Optional[str], level: DifficultyLevel, corrective: str = ""
+) -> Tuple[str, ValidationResult]:
+    """One LLM round-trip that BOTH rewrites and self-checks (US-161's quality gate).
+
+    Folding the gate into the generation call keeps the cost at a single LLM request
+    per attempt (rather than a second validation call), which matters under provider
+    token/rate limits. Raises LLMError on failure."""
+    context_line = f"Context: {context}\n" if context else ""
+    system = (
+        "You are a spoken-English communication coach. Rewrite the user's text so it is "
+        "clearer, more professional, and more effective. Preserve the user's original facts, "
+        "meaning, and intent EXACTLY — never invent new skills, achievements, numbers, or "
+        f"details that are not in the original. {DIFFICULTY_GUIDANCE[level]} "
+        f"Then review your own rewrite STRICTLY and honestly, as a critic would. {_rubric(level)} "
+        'Respond ONLY as JSON: {"rewrite": "<text>", "checks": '
+        '{"fact_preservation": true, ...}, "issues": ["..."]}.'
+    )
+    if corrective:
+        system += f" The previous attempt was rejected for these reasons — fix them: {corrective}"
+    raw = await llm_client.chat_json(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"{context_line}Original: {original}"},
+        ],
+        temperature=0.4,
+        max_tokens=600,
+    )
+    rewrite = (raw.get("rewrite") or "").strip()
+    if not rewrite:
+        raise llm_client.LLMError("empty rewrite")
+    raw_checks = raw.get("checks") or {}
+    checks = {name: bool(raw_checks.get(name, True)) for name in VALIDATION_CHECKS}
+    issues = [str(i) for i in (raw.get("issues") or []) if str(i).strip()]
+    validation = ValidationResult(
+        passed=all(checks.values()), validated=True, checks=checks, issues=issues
+    )
+    return rewrite, validation
+
+
 async def generate_rewrite(
     payload: GenerateRewriteRequest, user_id: str = Depends(require_auth)
 ) -> GenerateRewriteResponse:
     _require_rewritable(payload.original)
     level, auto = await _resolve_difficulty(user_id, payload.difficulty)
 
-    if not llm_client.is_configured():
+    def _offline_response() -> GenerateRewriteResponse:
+        # LLM unavailable (not configured, or a transport/rate-limit error): the best we
+        # can do is a light cleanup. generated_by="offline" tells the UI to flag it, so a
+        # near-passthrough is never mistaken for a real rewrite.
         return GenerateRewriteResponse(
             original=payload.original,
             rewrite=_offline_generate(payload.original),
             difficulty_used=level,
             auto_detected=auto,
             generated_by="offline",
+            validation=ValidationResult(passed=True, validated=False),
+            attempts=1,
         )
 
-    context_line = f"Context: {payload.context}\n" if payload.context else ""
-    system = (
-        "You are a spoken-English communication coach. Rewrite the user's text so it is "
-        "clearer, more professional, and more effective. Preserve the user's original facts, "
-        "meaning, and intent EXACTLY — never invent new skills, achievements, numbers, or "
-        f"details that are not in the original. {DIFFICULTY_GUIDANCE[level]} "
-        'Respond ONLY as JSON: {"rewrite": "<the rewritten text>"}.'
-    )
+    if not llm_client.is_configured():
+        return _offline_response()
+
+    # US-161: generate + self-check in ONE call per attempt; regenerate (at most
+    # MAX_GENERATION_ATTEMPTS) only if the gate fails, feeding the issues back in. After
+    # the last attempt we surface the best rewrite with its (failing) checks rather than
+    # hard-fail, so the learner always gets something.
+    corrective = ""
+    last: Optional[Tuple[str, ValidationResult]] = None
     try:
-        raw = await llm_client.chat_json(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"{context_line}Original: {payload.original}"},
-            ],
-            temperature=0.4,
-            max_tokens=800,
-        )
-        rewrite = (raw.get("rewrite") or "").strip()
-        if not rewrite:
-            raise llm_client.LLMError("empty rewrite")
+        for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
+            rewrite, validation = await _generate_and_check(
+                payload.original, payload.context, level, corrective
+            )
+            last = (rewrite, validation)
+            if validation.passed or attempt == MAX_GENERATION_ATTEMPTS:
+                return GenerateRewriteResponse(
+                    original=payload.original,
+                    rewrite=rewrite,
+                    difficulty_used=level,
+                    auto_detected=auto,
+                    generated_by="llm",
+                    validation=validation,
+                    attempts=attempt,
+                )
+            corrective = "; ".join(validation.issues) or "Improve overall quality."
+        # Unreachable (loop always returns on the last attempt), but keeps types happy.
+        rewrite, validation = last  # type: ignore[misc]
         return GenerateRewriteResponse(
-            original=payload.original,
-            rewrite=rewrite,
-            difficulty_used=level,
-            auto_detected=auto,
-            generated_by="llm",
+            original=payload.original, rewrite=rewrite, difficulty_used=level,
+            auto_detected=auto, generated_by="llm", validation=validation,
+            attempts=MAX_GENERATION_ATTEMPTS,
         )
     except llm_client.LLMError as e:
         logger.warning("rewrite generation failed (%s); using offline cleanup", e)
-        return GenerateRewriteResponse(
-            original=payload.original,
-            rewrite=_offline_generate(payload.original),
-            difficulty_used=level,
-            auto_detected=auto,
-            generated_by="offline",
+        return _offline_response()
+
+
+# ── US-161: Rewrite Reliability & Quality Validation ──────────────────────────
+VALIDATION_CHECKS = [
+    "fact_preservation",
+    "tone_consistency",
+    "professional_vocabulary",
+    "readability",
+    "no_hallucination",
+    "context_preservation",
+]
+
+
+def _rubric(level: DifficultyLevel) -> str:
+    """The single quality rubric shared by BOTH gate call sites — the in-generation
+    self-check and the standalone /validate endpoint — so the two can never drift and
+    disagree about the same {original, rewrite} pair.
+
+    Wording matters: raising the register is the feature's whole purpose, so
+    tone_consistency must judge *appropriateness for the target level*, not similarity
+    to the original's casual tone. Likewise a faithful paraphrase ("I work hard" ->
+    "strong work ethic") is NOT a hallucination — only genuinely new facts are."""
+    return (
+        "Judge these six booleans (true = passes): "
+        "fact_preservation — no NEW facts, skills, numbers, employers, or credentials that "
+        "aren't in the original, and none of the original's facts dropped or contradicted; "
+        "rewording the same fact more professionally is fine and still passes. "
+        "tone_consistency — the tone is consistent within itself and APPROPRIATE for the "
+        f"'{level.value}' target register; becoming more polished/formal than the original is "
+        "the intended goal and must NOT be marked false. "
+        f"professional_vocabulary — word choice suits the '{level.value}' level and is not "
+        "needlessly complex. "
+        "readability — clear and easy to follow. "
+        "no_hallucination — invents no new claims or specifics; faithful paraphrase passes. "
+        "context_preservation — keeps the original intent and subject matter. "
+        "For every FALSE check add a short reason to issues; if all pass, issues is empty."
+    )
+
+
+async def _validate_rewrite(
+    original: str, rewrite: str, level: DifficultyLevel
+) -> ValidationResult:
+    """Quality gate. Returns validated=False (and passed=True) when the LLM is
+    unavailable — the gate is skipped rather than blocking the rewrite."""
+    if not llm_client.is_configured():
+        return ValidationResult(passed=True, validated=False)
+
+    system = (
+        "You are a strict quality-assurance validator for AI-rewritten text. Check the "
+        f"REWRITE against the ORIGINAL. {_rubric(level)} Respond ONLY as JSON: "
+        '{"checks": {"fact_preservation": true, ...}, "issues": ["..."]}. Include all six checks.'
+    )
+    user_msg = f"ORIGINAL:\n{original}\n\nREWRITE:\n{rewrite}"
+    try:
+        raw = await llm_client.chat_json(
+            [{"role": "system", "content": system}, {"role": "user", "content": user_msg}],
+            temperature=0.1,
+            max_tokens=600,
         )
+        raw_checks = raw.get("checks") or {}
+        checks = {name: bool(raw_checks.get(name, True)) for name in VALIDATION_CHECKS}
+        issues = [str(i) for i in (raw.get("issues") or []) if str(i).strip()]
+        passed = all(checks.values())
+        return ValidationResult(passed=passed, validated=True, checks=checks, issues=issues)
+    except llm_client.LLMError as e:
+        # Can't validate — don't block; mark as skipped so callers know it's ungated.
+        logger.warning("rewrite validation failed (%s); skipping gate", e)
+        return ValidationResult(passed=True, validated=False)
+
+
+async def validate_rewrite(
+    payload: ValidateRewriteRequest, user_id: str = Depends(require_auth)
+) -> ValidationResult:
+    """Standalone quality gate for an arbitrary {original, rewrite} pair (US-161)."""
+    _require_rewritable(payload.original)
+    level = payload.difficulty or DifficultyLevel.INTERMEDIATE
+    return await _validate_rewrite(payload.original, payload.rewrite, level)
 
 
 # ── US-156: Rewrite Improvement Score ─────────────────────────────────────────
@@ -223,11 +365,11 @@ def _offline_score(original: str, rewrite: str) -> ScoreRewriteResponse:
         for name in SCORE_DIMENSIONS
     ]
     overall = 50 if identical else base
-    significant = overall >= SIGNIFICANCE_THRESHOLD
+    significant = _is_significant([d.score for d in dims])
     summary = (
-        "Excellent original response — the rewrite barely changes it."
-        if not significant
-        else "Your rewrite tightens the wording and word choice."
+        "Your rewrite tightens the wording and word choice."
+        if significant
+        else NO_SIGNIFICANT_IMPROVEMENT_MESSAGE
     )
     return ScoreRewriteResponse(
         overall_score=overall,
@@ -243,7 +385,9 @@ async def score_rewrite(
 ) -> ScoreRewriteResponse:
     _require_rewritable(payload.original)
 
-    if not llm_client.is_configured():
+    # An unchanged rewrite is 50 ("no change") by definition — resolve it deterministically
+    # instead of asking the model, which can otherwise score identical text as a regression.
+    if not llm_client.is_configured() or _normalize(payload.original) == _normalize(payload.rewrite):
         return _offline_score(payload.original, payload.rewrite)
 
     system = (
@@ -279,11 +423,14 @@ async def score_rewrite(
                 )
             )
         overall = round(sum(d.score for d in dims) / len(dims))
-        significant = overall >= SIGNIFICANCE_THRESHOLD
-        summary = str(raw.get("summary") or "").strip() or (
-            "Excellent original response — little needed changing."
-            if not significant
-            else "The rewrite is a clear improvement over the original."
+        significant = _is_significant([d.score for d in dims])
+        # E-01: when nothing meaningfully improved, the story requires praising the
+        # original rather than dressing up non-improvements — so the copy is ours, not
+        # the model's. When it DID improve, the model's summary explains where (the AC).
+        summary = (
+            str(raw.get("summary") or "").strip() or "The rewrite is a clear improvement over the original."
+            if significant
+            else NO_SIGNIFICANT_IMPROVEMENT_MESSAGE
         )
         return ScoreRewriteResponse(
             overall_score=overall,
@@ -302,7 +449,7 @@ def _offline_explain(original: str, rewrite: str) -> ExplainRewriteResponse:
     if _normalize(original) == _normalize(rewrite):
         return ExplainRewriteResponse(
             changes=[],
-            summary="Your original wording was already effective.",
+            summary=NO_MEANINGFUL_CHANGES_MESSAGE,
             has_meaningful_changes=False,
             explained_by="offline",
         )
@@ -329,7 +476,9 @@ async def explain_rewrite(
 ) -> ExplainRewriteResponse:
     _require_rewritable(payload.original)
 
-    if not llm_client.is_configured():
+    # Identical text has nothing to explain (E-01) — decide that here rather than
+    # spending an LLM call to be told the same thing.
+    if not llm_client.is_configured() or _normalize(payload.original) == _normalize(payload.rewrite):
         return _offline_explain(payload.original, payload.rewrite)
 
     system = (
@@ -364,10 +513,12 @@ async def explain_rewrite(
                 )
             )
         if not changes:
-            # E-01: no meaningful changes.
+            # E-01: no meaningful changes — always the spec's exact reassurance copy, not
+            # whatever the model phrased it as, so this branch reads identically to the
+            # offline path and to the UI's own empty state.
             return ExplainRewriteResponse(
                 changes=[],
-                summary=str(raw.get("summary") or "Your original wording was already effective."),
+                summary=NO_MEANINGFUL_CHANGES_MESSAGE,
                 has_meaningful_changes=False,
                 explained_by="llm",
             )

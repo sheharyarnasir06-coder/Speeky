@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "react-toastify";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
@@ -86,6 +87,8 @@ export function LoginForm({ onSubmit }: LoginFormProps) {
           email: values.email.trim(),
           password: values.password,
         });
+
+        toast.success(`Login successful for ${user.name.split(" ")[0]}!`);
         setUser(user);
         router.push("/dashboard");
       }
@@ -95,6 +98,7 @@ export function LoginForm({ onSubmit }: LoginFormProps) {
           ? error.message
           : "Something went wrong. Please try again.";
       setFormError(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }

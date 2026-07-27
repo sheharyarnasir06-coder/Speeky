@@ -1,5 +1,5 @@
 import * as React from "react";
-import { playText } from "./tts";
+import { playText, stopCurrent } from "./tts";
 
 interface SpeakableTurn {
   role: string;
@@ -10,12 +10,16 @@ interface SpeakableTurn {
  * the current last message right when audioMode flips on again too (not
  * just turns that arrive afterward) — otherwise toggling off then back on
  * looks broken since the "already played" guard blocks it silently. */
-export function useAutoSpeak(audioMode: boolean, turns: SpeakableTurn[] | null | undefined) {
+export function useAutoSpeak(
+  audioMode: boolean,
+  turns: SpeakableTurn[] | null | undefined,
+) {
   const lastPlayed = React.useRef(-1);
   const wasOn = React.useRef(false);
 
   React.useEffect(() => {
     if (!audioMode || !turns?.length) {
+      stopCurrent();
       wasOn.current = audioMode;
       return;
     }

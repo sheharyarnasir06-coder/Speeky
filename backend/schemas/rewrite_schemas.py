@@ -44,12 +44,38 @@ class GenerateRewriteRequest(BaseModel):
     )
 
 
+# ── US-161: Rewrite Reliability & Quality Validation ──────────────────────────
+class ValidationResult(BaseModel):
+    """Outcome of the quality gate that every generated rewrite passes through.
+
+    checks maps each dimension (fact_preservation, tone_consistency,
+    professional_vocabulary, readability, no_hallucination, context_preservation)
+    to pass/fail. `validated=False` means the gate was skipped (LLM unavailable),
+    not that it failed."""
+
+    passed: bool
+    validated: bool
+    checks: dict = Field(default_factory=dict)
+    issues: List[str] = Field(default_factory=list)
+
+
 class GenerateRewriteResponse(BaseModel):
     original: str
     rewrite: str
     difficulty_used: DifficultyLevel
     auto_detected: bool  # True when difficulty was resolved from the learner's stored level
     generated_by: str    # "llm" | "offline"
+    # US-161: quality gate result + how many generations it took to pass.
+    validation: Optional[ValidationResult] = None
+    attempts: int = 1
+
+
+class ValidateRewriteRequest(BaseModel):
+    original: str = Field(..., min_length=1)
+    rewrite: str = Field(..., min_length=1)
+    difficulty: Optional[DifficultyLevel] = Field(
+        None, description="Optional level, so vocabulary-complexity is judged against the right tier"
+    )
 
 
 # ── US-156: Rewrite Improvement Score ─────────────────────────────────────────

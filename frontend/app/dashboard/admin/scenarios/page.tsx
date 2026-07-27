@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { toast } from "react-toastify";
 import { FlaskConical, Pencil, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -204,6 +205,7 @@ export default function AdminScenariosPage() {
       }
       setModalOpen(false);
       refresh();
+      toast.success(editingId ? "Scenario updated." : "Scenario created.");
     } catch (err) {
       setFormError(
         err instanceof ApiError ? err.message : "Couldn't save this scenario.",
@@ -219,8 +221,9 @@ export default function AdminScenariosPage() {
     try {
       await adminDeleteCustomScenario(scenario.id);
       refresh();
+      toast.success("Scenario deleted.");
     } catch (err) {
-      setError(
+      toast.error(
         err instanceof ApiError
           ? err.message
           : "Couldn't delete this scenario.",

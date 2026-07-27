@@ -226,6 +226,28 @@ def build_grammar_correction_prompt(text: str) -> str:
 
 
 # ===========================================================================
+# Code-Switch Detection — word/phrase -> English equivalent lookup
+# (lib/code_switch/code_switch_text.py, US-53). Replaces a prior
+# deep-translator/Google-Translate round-trip with our existing Groq
+# client, so no separate third-party translation service is needed.
+# ===========================================================================
+
+CODE_SWITCH_TRANSLATION_PROMPT = """Give a short, direct English equivalent for the word or
+phrase below, as it is used in the sentence. Answer with ONLY the English equivalent, in as
+few words as possible - no explanation, no punctuation, no surrounding quotes.
+If the word or phrase is already English, or has no clear English equivalent, reply with
+exactly one word: SAME
+
+Sentence: "{context}"
+Word or phrase: "{token}"
+"""
+
+
+def build_code_switch_translation_prompt(token: str, context: str) -> str:
+    return CODE_SWITCH_TRANSLATION_PROMPT.format(token=token, context=context)
+
+
+# ===========================================================================
 # Interview Coach — scenario-based flow (job_interview -> salary_negotiation)
 # ===========================================================================
 

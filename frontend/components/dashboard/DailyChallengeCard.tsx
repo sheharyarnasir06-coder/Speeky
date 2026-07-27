@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Flame, Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAudioRecorder } from "@/lib/useAudioRecorder";
 import { cn } from "@/lib/utils";
@@ -37,6 +38,9 @@ export function DailyChallengeCard() {
   const [result, setResult] = React.useState<CompleteChallengeResponse | null>(null);
   const [disputeStatus, setDisputeStatus] = React.useState<"none" | "pending" | "resolved">("none");
   const recorder = useAudioRecorder();
+  const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
+    featureName: "Daily Challenge",
+  });
 
   const refreshStreak = React.useCallback(() => {
     getDailyChallengeStreak()
@@ -119,6 +123,7 @@ export function DailyChallengeCard() {
 
   return (
     <div className="flex animate-fade-up flex-col justify-between gap-6 rounded-2xl bg-gradient-to-br from-accent to-accent/80 p-6 text-accent-foreground shadow-sm transition-transform duration-200 hover:-translate-y-0.5">
+      {gate}
       <div>
         <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-accent-foreground/80">
           <Flame className="h-4 w-4" aria-hidden="true" />
@@ -150,7 +155,11 @@ export function DailyChallengeCard() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleRecordToggle}
+              onClick={
+                recorder.isRecording
+                  ? handleRecordToggle
+                  : () => void runWithVoiceReadiness(handleRecordToggle)
+              }
               disabled={!recorder.isSupported || busy || recorder.state === "stopping"}
               aria-pressed={recorder.isRecording}
               aria-label={recorder.isRecording ? "Stop recording and submit" : "Record a response"}

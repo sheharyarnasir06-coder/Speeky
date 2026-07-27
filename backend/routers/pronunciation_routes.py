@@ -4,6 +4,7 @@ from services.pronunciation_coach_service import (
     check_resumable_session,
     end_session,
     get_session,
+    get_word_pronunciation_audio,
     interrupt_session,
     resume_session,
     retry_word,
@@ -23,3 +24,7 @@ router.add_api_route("/{session_id}/interrupt", interrupt_session, methods=["POS
 router.add_api_route("/{session_id}/resume", resume_session, methods=["POST"])
 router.add_api_route("/{session_id}/end", end_session, methods=["POST"])
 router.add_api_route("/{session_id}", get_session, methods=["GET"])
+
+# "Hear correct pronunciation" playback (PRN-US-10 / PRN-US-11) — standalone, no
+# session state needed, so it slots in alongside the session-based routes above.
+router.add_api_route("/words/{word}/audio", get_word_pronunciation_audio, methods=["GET"])

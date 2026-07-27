@@ -3,6 +3,7 @@
 import * as React from "react";
 import { CheckCircle2, Lock, Mic, Sparkles, Square, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { ApiError } from "@/lib/api";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { useAudioRecorder } from "@/lib/useAudioRecorder";
@@ -48,6 +49,9 @@ export default function PronunciationCoachPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const recorder = useAudioRecorder();
+  const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
+    featureName: "Pronunciation Coach",
+  });
 
   const activeSessionRef = React.useRef<{ sessionId: string; completed: boolean } | null>(null);
 
@@ -220,6 +224,7 @@ export default function PronunciationCoachPage() {
   if (step.name === "resume-prompt") {
     return (
       <div className="mx-auto flex max-w-lg flex-col gap-4">
+        {gate}
         <div className="flex flex-col items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-2.5">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
@@ -243,6 +248,7 @@ export default function PronunciationCoachPage() {
     const { session } = step;
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-6">
+        {gate}
         <div>
           <h1 className="font-serif text-2xl font-semibold text-foreground">Pronunciation Coach</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -262,7 +268,11 @@ export default function PronunciationCoachPage() {
             <button
               type="button"
               disabled={!recorder.isSupported || isSubmitting || recorder.state === "stopping"}
-              onClick={handleAttemptRecordToggle}
+              onClick={
+                recorder.isRecording
+                  ? handleAttemptRecordToggle
+                  : () => void runWithVoiceReadiness(handleAttemptRecordToggle)
+              }
               aria-pressed={recorder.isRecording}
               className={cn(
                 "flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-primary-foreground shadow-md transition-all duration-200 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100",
@@ -306,6 +316,7 @@ export default function PronunciationCoachPage() {
     const canAdvance = Boolean(result.next_sentence);
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-6">
+        {gate}
         <div
           className={cn(
             "flex items-start gap-2.5 rounded-2xl border p-4 text-sm",
@@ -336,7 +347,7 @@ export default function PronunciationCoachPage() {
                   key={`${w.word}-${i}`}
                   className={cn(
                     "rounded-full px-3 py-1 text-sm font-medium",
-                    w.correct ? "bg-success/15 text-success" : "bg-danger/15 text-danger",
+                    w.status === "correct" ? "bg-success/15 text-success" : "bg-danger/15 text-danger",
                   )}
                 >
                   {w.word}
@@ -369,6 +380,7 @@ export default function PronunciationCoachPage() {
   const { summary } = step;
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
+      {gate}
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
         <h1 className="mt-3 font-serif text-2xl font-semibold">Session Complete</h1>

@@ -2,7 +2,8 @@ import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-load_dotenv()  # must run before any os.environ reads below
+load_dotenv(override=True)  # must run before any os.environ reads below; override so a
+# `--reload` restart picks up .env edits (e.g. GROQ_MODEL) instead of keeping stale values.
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -44,7 +45,11 @@ from routers.notification_routes import router as notification_router
 from routers.overuse_routes import router as overuse_router
 from routers.vocabulary_progress_routes import router as vocabulary_progress_router
 from routers.public_speaking_routes import router as public_speaking_router
+from routers.daily_challenge_routes import router as daily_challenge_router
+from routers.code_switch_routes import router as code_switch_router
 from routers.rewrite_routes import router as rewrite_router
+from routers.rewrite_vocab_routes import router as rewrite_vocab_router
+from routers.script_practice_routes import router as script_practice_router
 from utils.app_error import AppError
 
 
@@ -106,7 +111,11 @@ app.include_router(overuse_router, prefix="/api/overuse")
 app.include_router(vocabulary_progress_router, prefix="/api/vocabulary-progress")
 app.include_router(practice_time_router, prefix="/api/practice-time")
 app.include_router(public_speaking_router, prefix="/api/public-speaking")
+app.include_router(daily_challenge_router, prefix="/api/daily-challenge")
+app.include_router(code_switch_router, prefix="/api/code-switch")
 app.include_router(rewrite_router, prefix="/api/rewrite")
+app.include_router(rewrite_vocab_router, prefix="/api/rewrite-vocab")
+app.include_router(script_practice_router, prefix="/api/script-practice")
 
 # Local-folder avatar storage, exposed to frontend as static files
 _uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")

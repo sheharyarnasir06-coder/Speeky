@@ -11,6 +11,7 @@ import {
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AccentStalenessBanner } from "@/components/dashboard/AccentStalenessBanner";
 import { DailyChallengeCard } from "@/components/dashboard/DailyChallengeCard";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -42,6 +43,24 @@ const CATEGORY_STYLES: Record<
   },
 };
 
+const MASTERY_METRIC_STYLES: Record<
+  string,
+  { barClassName: string; valueClassName: string }
+> = {
+  fluency: {
+    barClassName: "bg-primary/70 last:bg-primary",
+    valueClassName: "text-primary",
+  },
+  confidence: {
+    barClassName: "bg-accent/60 last:bg-accent",
+    valueClassName: "text-accent",
+  },
+  speech: {
+    barClassName: "bg-foreground/60 last:bg-foreground",
+    valueClassName: "text-foreground",
+  },
+};
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const firstName = user?.name?.trim().split(/\s+/)[0] ?? "there";
@@ -66,6 +85,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <AccentStalenessBanner />
       <div className="flex animate-fade-up flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div>
           <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
@@ -79,9 +99,9 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_2fr]">
-        <DailyChallengeCard />
+      <DailyChallengeCard />
 
+      <div className="grid grid-cols-1 gap-6">
         <div
           className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-shadow duration-200 hover:shadow-md"
           style={{ animationDelay: "150ms" }}
@@ -101,7 +121,12 @@ export default function DashboardPage() {
                   <span className="tracking-wide text-muted-foreground">
                     {metric.label}
                   </span>
-                  <span className={cn("font-semibold", metric.valueClassName)}>
+                  <span
+                    className={cn(
+                      "font-semibold",
+                      MASTERY_METRIC_STYLES[metric.id]?.valueClassName,
+                    )}
+                  >
                     {metric.value}%
                   </span>
                 </div>
@@ -109,7 +134,10 @@ export default function DashboardPage() {
                   {metric.bars.map((height, i) => (
                     <span
                       key={i}
-                      className={cn("flex-1 rounded-sm", metric.barClassName)}
+                      className={cn(
+                        "flex-1 rounded-sm",
+                        MASTERY_METRIC_STYLES[metric.id]?.barClassName,
+                      )}
                       style={{ height: `${height}%` }}
                     />
                   ))}

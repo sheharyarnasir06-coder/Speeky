@@ -48,7 +48,22 @@ def analyze(waveform: np.ndarray, sample_rate: int) -> ProsodyData:
     voiced = pitch_hz[pitch_hz > 0]
     mean_pitch = float(np.mean(voiced)) if voiced.size else 0.0
     if voiced.size >= 2 and mean_pitch > 0:
-        semitones = 12.0 * np.log2(voiced / mean_pitch)
+        # Octave-correct before measuring spread. Praat's pitch tracker octave-jumps
+        # (halving/doubling F0) on creaky sentence-final voicing, which used to blow the
+        # 5-95 percentile range up to ~30 st on a plainly-read sample — saturating the
+        # downstream tone score. Fold each voiced frame to within a semitone-octave of the
+        # MEDIAN (robust to those jumps), then measure the 5-95 percentile spread.
+        median_pitch = float(np.median(voiced))
+        corrected = voiced.astype(np.float64).copy()
+        if median_pitch > 0:
+            # halve/double until within ±6 st (a factor of ~1.41) of the median
+            hi, lo = median_pitch * 1.41, median_pitch / 1.41
+            for _ in range(4):  # covers up to 4 octaves of error
+                corrected = np.where(corrected > hi, corrected / 2.0, corrected)
+                corrected = np.where(corrected < lo, corrected * 2.0, corrected)
+            semitones = 12.0 * np.log2(corrected / median_pitch)
+        else:
+            semitones = 12.0 * np.log2(voiced / mean_pitch)
         pitch_range = float(np.percentile(semitones, 95) - np.percentile(semitones, 5))
     else:
         pitch_range = 0.0

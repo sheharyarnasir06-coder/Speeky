@@ -15,6 +15,7 @@ interface MicrophoneCheckModalProps {
   open: boolean;
   onClose: () => void;
   onPassed: () => void;
+  featureName?: string;
 }
 
 const FAILURE_COPY: Record<MicrophoneCheckFailureReason, { title: string; detail: string }> = {
@@ -36,7 +37,12 @@ const FAILURE_COPY: Record<MicrophoneCheckFailureReason, { title: string; detail
   },
 };
 
-export function MicrophoneCheckModal({ open, onClose, onPassed }: MicrophoneCheckModalProps) {
+export function MicrophoneCheckModal({
+  open,
+  onClose,
+  onPassed,
+  featureName = "voice practice",
+}: MicrophoneCheckModalProps) {
   const [permissionState, setPermissionState] = React.useState<MicrophonePermissionState>("unknown");
   const [isChecking, setIsChecking] = React.useState(false);
   const [hasPassed, setHasPassed] = React.useState(false);
@@ -76,7 +82,7 @@ export function MicrophoneCheckModal({ open, onClose, onPassed }: MicrophoneChec
       open={open}
       onClose={isChecking ? () => {} : onClose}
       title="Microphone Check"
-      description="Speeky needs a live microphone before starting Accent Assessment."
+      description={`Speeky needs a live microphone before starting ${featureName}.`}
     >
       <div className="flex flex-col gap-5">
         <div className="rounded-xl border border-border bg-surface p-4">
@@ -87,7 +93,7 @@ export function MicrophoneCheckModal({ open, onClose, onPassed }: MicrophoneChec
             <div>
               <p className="text-sm font-medium text-foreground">Say one short word when prompted.</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                This quick test confirms your browser can capture audio before any scored assessment begins.
+                This quick test confirms your browser can capture audio before any voice session begins.
               </p>
             </div>
           </div>
@@ -103,7 +109,7 @@ export function MicrophoneCheckModal({ open, onClose, onPassed }: MicrophoneChec
         {hasPassed ? (
           <div className="flex items-start gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-foreground">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />
-            Your microphone is working. You can continue to Accent Assessment.
+            Your microphone is working. You can continue to {featureName}.
           </div>
         ) : null}
 

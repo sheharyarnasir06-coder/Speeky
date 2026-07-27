@@ -1,6 +1,34 @@
 import { api } from "./api";
 
-// ── Types (mirrors Backend/services/accent_progress_service.py response shapes) ─
+// ── Accent Progress Tracker (prefix: /api/accent-assessment) ─────────────────
+// Routes from: backend/routers/accent_routes.py
+// GET /api/accent-assessment/progress-tracker
+
+export interface MonthMetric {
+  month: number;
+  pronunciation: number | null;
+  word_stress: number | null;
+  intonation: number | null;
+  clarity: number | null;
+  is_locked: boolean;
+}
+
+export interface AccentProgressTrackerData {
+  is_insufficient_data: boolean;
+  message?: string | null;
+  cta_suggestion?: string | null;
+  regressed_metrics: string[];
+  months: MonthMetric[];
+}
+
+// GET /api/accent-assessment/progress-tracker
+export function getAccentProgressTracker() {
+  return api<AccentProgressTrackerData>("/accent-assessment/progress-tracker");
+}
+
+// ── Legacy: Accent Progress Matrix (prefix: /api/accent-progress) ────────────
+// Routes from: backend/routers/accent_progress_routes.py
+// GET /api/accent-progress/matrix
 
 export type AccentTrend = "improved" | "stagnated" | "degraded";
 
@@ -19,6 +47,9 @@ export interface AccentProgressMatrix {
   message?: string;
   locked?: boolean;
   days_until_unlock?: number | null;
+  /** Server-built lock copy — correct wording whether the wait is days away or the
+   *  Month 3 check-in is simply outstanding. Falls back to the day count if absent. */
+  unlock_message?: string | null;
   baseline_completed_at?: string;
   current_completed_at?: string | null;
   metrics?: AccentMetricRow[];
@@ -38,10 +69,12 @@ export interface SubmitAccentAssessmentResult {
   is_baseline: boolean;
 }
 
+// GET /api/accent-progress/matrix
 export function getAccentProgressMatrix() {
   return api<AccentProgressMatrix>("/accent-progress/matrix");
 }
 
+// POST /api/accent-progress/assessments
 export function submitAccentAssessment(data: SubmitAccentAssessmentInput) {
   return api<SubmitAccentAssessmentResult>("/accent-progress/assessments", {
     method: "POST",

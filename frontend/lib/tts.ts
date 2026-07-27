@@ -8,7 +8,7 @@ import { synthesizeSpeech } from "./conversation";
 let generation = 0;
 let currentAudio: HTMLAudioElement | null = null;
 
-function stopCurrent() {
+export function stopCurrent() {
   generation += 1;
   if (currentAudio) {
     currentAudio.pause();

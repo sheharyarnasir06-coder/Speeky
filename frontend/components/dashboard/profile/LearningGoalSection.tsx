@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { toast } from "react-toastify";
 import { Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,6 @@ export function LearningGoalSection() {
   const { user } = useAuth();
   const [selected, setSelected] = React.useState<LearningGoal | null>(null);
   const [saved, setSaved] = React.useState<LearningGoal | null>(null);
-  const [justSaved, setJustSaved] = React.useState(false);
 
   React.useEffect(() => {
     if (!user) return;
@@ -36,8 +36,9 @@ export function LearningGoalSection() {
     if (!user || !selected) return;
     setLearningGoal(user.id, selected);
     setSaved(selected);
-    setJustSaved(true);
-    window.setTimeout(() => setJustSaved(false), 3000);
+    toast.success(
+      `Focus area updated — now prioritizing ${LEARNING_GOALS.find((g) => g.id === selected)?.label}.`,
+    );
   }
 
   return (
@@ -72,13 +73,6 @@ export function LearningGoalSection() {
           </button>
         ))}
       </div>
-
-      {justSaved ? (
-        <p className="mt-4 text-sm text-success">
-          Focus area updated — your dashboard now prioritizes {" "}
-          {LEARNING_GOALS.find((g) => g.id === saved)?.label}.
-        </p>
-      ) : null}
 
       <Button
         type="button"

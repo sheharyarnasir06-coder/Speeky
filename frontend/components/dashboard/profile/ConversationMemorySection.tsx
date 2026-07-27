@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { toast } from "react-toastify";
 import { Brain, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ApiError } from "@/lib/api";
@@ -20,7 +21,10 @@ export function ConversationMemorySection() {
   React.useEffect(() => {
     listMemoryFacts()
       .then((data) => setFacts(data.facts))
-      .catch(() => setFacts([]));
+      .catch(() => {
+        setFacts([]);
+        toast.error("Couldn't load conversation memory.");
+      });
   }, []);
 
   async function handleOptOut(enabled: boolean) {

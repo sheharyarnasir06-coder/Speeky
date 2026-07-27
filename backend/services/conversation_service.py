@@ -25,10 +25,13 @@ What is deliberately NOT handled here (client/device concerns, not backend):
     session_type="conversation" and this session's id into those existing endpoints.
 """
 
+import logging
 import os
 import re
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -47,6 +50,8 @@ from lib import (
     tts_client,
 )
 from lib.session_scorer import AudioFeatures
+from lib.code_switch.code_switch_text import TextCodeSwitchDetector
+from services.code_switch_service import log_detected_word
 from middlewares.auth_middleware import require_auth
 from middlewares.error_handler import AuthError
 from prisma.enums import LearningLevel
@@ -379,6 +384,8 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
     session["turns"].append({
         "role": "user", "content": redacted_text, "input_mode": req.input_mode,
         "correction_chip": chip_result["chip"], "created_at": now,
+        # Word-level timing from the STT agent, kept for pronunciation_coach's
+        # word-level scoring/highlighting (US-79) — the turn itself doesn't use it.
         "duration_seconds": req.audio_features.duration_seconds if req.audio_features else 0.0,
         "word_timings": req.audio_features.word_timings if req.audio_features else [],
     })
@@ -400,6 +407,23 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
                              "correction_chip": None, "created_at": _now()})
     await kv_store.store.update(NAMESPACE, session_id, session)
 
+    # US-152: Silently detect code-switched words and log to the personal word list.
+    # Runs after the reply is already saved — never blocks the user-facing response.
+    if not session_ended and llm_client.is_configured():
+        try:
+            detector = TextCodeSwitchDetector()
+            detection = await detector.detect(text)
+            for flagged in detection.get("flagged", []):
+                await log_detected_word(
+                    user_id=user_id,
+                    word=flagged["token"],
+                    english_equivalent=flagged["suggestion"],
+                    context_sentence=text,
+                )
+        except Exception as exc:
+            # Never let detection errors surface to the user.
+            logger.warning("US-152 code-switch detection failed silently: %s", exc)
+
     return {
         "session_id": session_id, "reply": reply, "level": session["level"],
         "correction_chip": chip_result["chip"], "flags": flags, "session_ended": session_ended,
@@ -409,7 +433,11 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
 # ── AIC-US-16 (voice mode): LiveKit room token + agent-fed transcript intake ────
 async def _voice_token(user_id: str, session_id: str) -> Dict:
     session = await _get_session(session_id, user_id)  # raises SessionNotFoundError if not owned
-    return livekit_tokens.mint_room_token(session["room_name"], identity=user_id)
+    # "timed" (not the bare default): Conversation is the only caller that attaches
+    # word_timings + duration_seconds to the outgoing message for pronunciation scoring
+    # (US-79/74) — see agent.py's transcribe_timed(). Scenario/Coaching/Interview Coach/
+    # Assessment discard those fields, so they stay on the cheaper default pipeline.
+    return livekit_tokens.mint_room_token(session["room_name"], identity=user_id, mode="timed")
 
 
 async def _agent_send_message(session_id: str, req: SendMessageSchema, secret: Optional[str]) -> Dict:
@@ -450,6 +478,12 @@ async def _end_session(user_id: str, session_id: str) -> Dict:
     duration = (_now() - session["started_at"]).total_seconds()
     session["status"] = "completed"
     session["completed_at"] = _now()
+    # Persisted (not just returned) so a later accent re-baseline request (US-84)
+    # can reuse this session's real scores instead of re-scoring or accepting
+    # client-supplied numbers.
+    session["fluency_score"] = scored.fluency_score
+    session["vocabulary_score"] = scored.vocabulary_score
+    session["pronunciation_score"] = scored.pronunciation_score
     await kv_store.store.update(NAMESPACE, session_id, session)
 
     new_facts = await _extract_and_store_facts(user_id, [t["content"] for t in user_turns])
@@ -466,6 +500,19 @@ async def _end_session(user_id: str, session_id: str) -> Dict:
         ))
     except Exception:
         pass  # best-effort — conversation scoring must not fail because memory logging did
+
+    # US-84/US-83: record this session's real scores as an accent-assessment drill
+    # so accent-profile staleness/dispute have real data to operate on.
+    try:
+        from services.accent_assessment_service import record_conversation_drill
+
+        await record_conversation_drill(
+            user_id, session_id,
+            {"fluency": scored.fluency_score, "vocabulary": scored.vocabulary_score,
+             "pronunciation": scored.pronunciation_score},
+        )
+    except Exception:
+        pass  # best-effort — conversation scoring must not fail because accent logging did
 
     return {
         "session_id": session_id, "status": session["status"], "duration_seconds": duration,

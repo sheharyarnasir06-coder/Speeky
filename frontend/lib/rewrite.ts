@@ -12,6 +12,23 @@ export const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   executive: "Executive",
 };
 
+// US-161 -------------------------------------------------------------------
+export interface ValidationResult {
+  passed: boolean;
+  validated: boolean; // false = gate skipped (offline)
+  checks: Record<string, boolean>;
+  issues: string[];
+}
+
+export const CHECK_LABELS: Record<string, string> = {
+  fact_preservation: "Facts preserved",
+  tone_consistency: "Tone consistent",
+  professional_vocabulary: "Vocabulary fit",
+  readability: "Readable",
+  no_hallucination: "No hallucination",
+  context_preservation: "Context kept",
+};
+
 // US-158 -------------------------------------------------------------------
 export interface GenerateRewriteResult {
   original: string;
@@ -19,6 +36,19 @@ export interface GenerateRewriteResult {
   difficulty_used: DifficultyLevel;
   auto_detected: boolean;
   generated_by: "llm" | "offline";
+  validation?: ValidationResult | null; // US-161 quality gate
+  attempts?: number;
+}
+
+export function validateRewrite(
+  original: string,
+  rewrite: string,
+  difficulty?: DifficultyLevel,
+) {
+  return api<ValidationResult>("/rewrite/validate", {
+    method: "POST",
+    body: JSON.stringify({ original, rewrite, difficulty: difficulty ?? null }),
+  });
 }
 
 export function generateRewrite(

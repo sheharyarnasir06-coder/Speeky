@@ -1,4 +1,5 @@
 import { api } from "./api";
+import type { VoiceTokenResult } from "./useLiveKitVoice";
 
 // ── Types (mirrors Backend/services/assessment_service.py, gating_service.py,
 // reassessment_service.py response shapes) ──────────────────────────────────
@@ -11,6 +12,9 @@ export interface StartAssessmentResult {
   question_mode: "text" | "audio";
   estimated_duration_minutes: number;
   is_re_assessment?: boolean;
+  // True when start resumed an existing in-progress assessment (browser back/refresh)
+  // instead of creating a new one — see assessment_service._begin_assessment.
+  resumed?: boolean;
 }
 
 export interface SubmitResponseInProgress {
@@ -42,7 +46,8 @@ export interface SubmitResponseCompleted {
 
 export type SubmitResponseResult =
   | SubmitResponseInProgress
-  | SubmitResponseCompleted;
+  | SubmitResponseCompleted
+  | AssessmentProcessing;
 
 export interface SkillDetail {
   score: number;
@@ -63,6 +68,7 @@ export interface AssessmentSummary {
     fluency: SkillDetail;
     vocabulary: SkillDetail;
     pronunciation?: SkillDetail;
+    confidence: SkillDetail;
   };
   positive_framing: {
     title: string;
@@ -149,8 +155,25 @@ export function submitAssessmentResponse(
   });
 }
 
+export interface AssessmentProcessing {
+  status: "processing";
+  assessment_id: string;
+  message: string;
+}
+
 export function getResultsSummary(assessmentId: string) {
-  return api<AssessmentSummary>(`/assessment/${assessmentId}/summary`);
+  return api<AssessmentSummary | AssessmentProcessing>(
+    `/assessment/${assessmentId}/summary`,
+  );
+}
+
+// Voice mode: LiveKit room token for a spoken answer. Same pipeline as AI Conversation —
+// the generic voice_agent/ worker joins the room (name == assessmentId), transcribes, and
+// pushes the transcript back over the data channel (handled by useLiveKitVoice).
+export function getAssessmentVoiceToken(assessmentId: string) {
+  return api<VoiceTokenResult>(`/assessment/${assessmentId}/voice-token`, {
+    method: "POST",
+  });
 }
 
 // ── Feature-Access Gating (US-12) ────────────────────────────────────────────

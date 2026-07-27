@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Sparkles, Wand2, TriangleAlert, Info } from "lucide-react";
+import { Sparkles, Wand2, TriangleAlert, Info, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
@@ -12,11 +12,15 @@ import {
   DIFFICULTY_LABELS,
   DIMENSION_LABELS,
   CATEGORY_LABELS,
+  CHECK_LABELS,
   type DifficultyLevel,
   type GenerateRewriteResult,
   type ScoreRewriteResult,
   type ExplainRewriteResult,
 } from "@/lib/rewrite";
+import { introduceVocab } from "@/lib/rewriteVocab";
+import { ScriptPracticePanel } from "@/components/dashboard/ScriptPracticePanel";
+import { RewriteVocabPanel } from "@/components/dashboard/RewriteVocabPanel";
 import { cn } from "@/lib/utils";
 
 const DIFFICULTY_OPTIONS: { value: "" | DifficultyLevel; label: string }[] = [
@@ -45,6 +49,9 @@ export default function RewriteLabPage() {
   const [score, setScore] = React.useState<ScoreRewriteResult | null>(null);
   const [explain, setExplain] = React.useState<ExplainRewriteResult | null>(null);
 
+  // US-160: bump to tell the (self-fetching, paginated) vocab panel to refetch.
+  const [vocabSignal, setVocabSignal] = React.useState(0);
+
   async function handleRun() {
     if (!original.trim() || loading) return;
     setLoading(true);
@@ -53,16 +60,20 @@ export default function RewriteLabPage() {
     setScore(null);
     setExplain(null);
     try {
-      // US-158: generate the personalized rewrite first.
+      // US-158 (+ US-161 quality gate): generate the personalized rewrite first.
       const g = await generateRewrite(original.trim(), {
         difficulty: difficulty || undefined,
         context: context.trim() || undefined,
       });
       setGen(g);
       // US-156 + US-159: score and explain the same {original, rewrite} pair.
+      // US-160: seed the advanced words this rewrite introduced, then signal the panel.
       const [s, e] = await Promise.all([
         scoreRewrite(g.original, g.rewrite),
         explainRewrite(g.original, g.rewrite),
+        introduceVocab(g.original, g.rewrite, context.trim() || undefined)
+          .then(() => setVocabSignal((n) => n + 1))
+          .catch(() => {}),
       ]);
       setScore(s);
       setExplain(e);
@@ -153,16 +164,40 @@ export default function RewriteLabPage() {
               <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
               Your rewrite
             </h2>
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span className="rounded-full bg-secondary px-3 py-1 font-medium text-primary">
                 {DIFFICULTY_LABELS[gen.difficulty_used]} level
                 {gen.auto_detected ? " · auto" : ""}
               </span>
+              {/* US-161: quality gate outcome */}
+              {gen.validation?.validated ? (
+                gen.validation.passed ? (
+                  <span className="flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 font-medium text-primary">
+                    <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                    Quality-checked
+                    {gen.attempts && gen.attempts > 1 ? ` · ${gen.attempts} tries` : ""}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 rounded-full bg-warning/10 px-3 py-1 font-medium text-warning">
+                    <TriangleAlert className="h-3 w-3" aria-hidden="true" />
+                    Needs review
+                  </span>
+                )
+              ) : null}
               {gen.generated_by === "offline" ? (
                 <span className="rounded-full bg-muted px-3 py-1">offline mode</span>
               ) : null}
             </span>
           </div>
+          {gen.generated_by === "offline" ? (
+            <div className="flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+              <span>
+                The AI rewriter is temporarily unavailable (usage limit reached). This is only a basic
+                cleanup, not a full rewrite — please try again shortly.
+              </span>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="rounded-xl border border-border bg-surface p-4">
               <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -177,7 +212,43 @@ export default function RewriteLabPage() {
               <p className="text-sm text-foreground">{gen.rewrite}</p>
             </div>
           </div>
+          {/* US-161: which checks the rewrite passed, and any unresolved issues */}
+          {gen.validation?.validated ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(gen.validation.checks).map(([key, ok]) => (
+                  <span
+                    key={key}
+                    className={cn(
+                      "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                      ok
+                        ? "bg-primary/10 text-primary"
+                        : "bg-danger/10 text-danger",
+                    )}
+                  >
+                    {ok ? "✓" : "✕"} {CHECK_LABELS[key] ?? key}
+                  </span>
+                ))}
+              </div>
+              {gen.validation.issues.length > 0 ? (
+                <ul className="list-inside list-disc text-xs text-muted-foreground">
+                  {gen.validation.issues.map((issue, i) => (
+                    <li key={i}>{issue}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </div>
+      ) : null}
+
+      {/* ── US-157: practice the rewrite aloud ────────────────────────────── */}
+      {gen ? (
+        <ScriptPracticePanel
+          key={gen.rewrite}
+          script={gen.rewrite}
+          context={context.trim() || undefined}
+        />
       ) : null}
 
       {/* ── US-156: improvement score ─────────────────────────────────────── */}
@@ -255,6 +326,9 @@ export default function RewriteLabPage() {
           )}
         </div>
       ) : null}
+
+      {/* ── US-160: vocabulary mastery (self-fetching, paginated) ─────────── */}
+      <RewriteVocabPanel refreshSignal={vocabSignal} />
     </div>
   );
 }
