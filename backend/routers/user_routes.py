@@ -7,6 +7,7 @@ from services.user_service import (
     list_users,
     set_accent_preference,
     request_email_change,
+    transfer_super_admin,
     update_profile,
     update_user_role,
     upload_avatar,
@@ -32,6 +33,7 @@ router.add_api_route("/me/email/request-change", request_email_change, methods=[
 router.add_api_route("/me/email/verify-change", verify_email_change, methods=["POST"])
 
 
-# Admin-only (auth + role enforced via Depends(require_admin) on each handler)
+# Super-Admin-only (auth + role enforced via Depends(require_super_admin) on each handler)
 router.add_api_route("/", list_users, methods=["GET"])
 router.add_api_route("/{target_user_id}/role", update_user_role, methods=["PATCH"])
+router.add_api_route("/{target_user_id}/transfer-super-admin", transfer_super_admin, methods=["POST"])

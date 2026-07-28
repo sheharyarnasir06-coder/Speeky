@@ -247,7 +247,7 @@ export default function InterviewCoachSessionPage() {
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       {gate}
       <div className="flex items-center justify-between">
-        <h1 className="font-serif text-2xl font-semibold capitalize text-foreground">
+        <h1 className="font-serif text-h2 font-semibold capitalize text-foreground">
           {mode.replace("_", " ")} Interview
         </h1>
         <div className="flex items-center gap-2">
@@ -399,7 +399,7 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
-        <h1 className="mt-3 font-serif text-2xl font-semibold">Overall Score: {feedback.overall_score}</h1>
+        <h1 className="mt-3 font-serif text-h2 font-semibold">Overall Score: {feedback.overall_score}</h1>
         <p className="mt-2 text-sm text-primary-foreground/85">{feedback.closing_message}</p>
       </div>
 

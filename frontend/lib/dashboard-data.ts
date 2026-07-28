@@ -1,14 +1,11 @@
 import {
   Briefcase,
-  Coffee,
   Compass,
   Home,
   Mic,
-  Plane,
   Sparkles,
   TrendingUp,
   User,
-  UtensilsCrossed,
   Users,
   Volume2,
   Wand2,
@@ -114,12 +111,13 @@ export const RECENT_SCENARIOS: RecentScenario[] = [
 // entries are kept because they point at other, already-shipped features
 // (Interview Coach's own card lives above in the "AI Coach" section; Meeting Prep
 // is a separate mockup feature, US-66) rather than Scenario-Based Learning.
-
-export type ExploreCategory = "Work" | "Social" | "Travel" | "Daily Life";
+//
+// CM-US-05: categories are admin-managed and fetched dynamically (see
+// lib/categories.ts + lib/icon-map.ts) — no longer a hardcoded union here.
 
 export interface ExploreScenario {
   id: string;
-  category: ExploreCategory;
+  category: string;
   icon: LucideIcon;
   title: string;
   description: string;
@@ -127,22 +125,6 @@ export interface ExploreScenario {
   featured?: boolean;
   href?: string;
 }
-
-export const EXPLORE_CATEGORIES: ExploreCategory[] = [
-  "Work",
-  "Social",
-  "Travel",
-  "Daily Life",
-];
-
-// category → icon for scenarios fetched from the backend (which returns data,
-// not UI icons).
-export const EXPLORE_CATEGORY_ICONS: Record<ExploreCategory, LucideIcon> = {
-  Work: Briefcase,
-  Social: Coffee,
-  Travel: Plane,
-  "Daily Life": UtensilsCrossed,
-};
 
 export const EXPLORE_STATIC_SCENARIOS: ExploreScenario[] = [
   {

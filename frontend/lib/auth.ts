@@ -6,6 +6,7 @@ export interface AuthUser {
   name: string;
   avatarUrl: string;
   role: string;
+  createdAt: string;
 }
 
 // Signup is OTP-gated on the backend now: this only sends a code, it does

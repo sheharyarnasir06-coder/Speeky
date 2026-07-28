@@ -4,6 +4,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from schemas.limits import MAX_SHORT_TEXT_CHARS, MAX_SUBMISSION_CHARS
+
 
 class InterviewMode(str, Enum):
     STANDARD = "standard"      
@@ -63,7 +65,7 @@ class SessionStartResponse(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    answer_text: str = Field(..., description="Transcribed user answer")
+    answer_text: str = Field(..., max_length=MAX_SUBMISSION_CHARS, description="Transcribed user answer")
     response_duration_seconds: int = Field(0, description="Length of spoken answer")
     silence_before_seconds: int = Field(0, description="Silence before user started answering")
 
@@ -130,13 +132,13 @@ class ShareReviewResponse(BaseModel):
 
 
 class PeerCommentRequest(BaseModel):
-    comment_text: str
+    comment_text: str = Field(..., max_length=MAX_SUBMISSION_CHARS)
 
 
 class PeerComment(BaseModel):
     comment_id: str
     share_id: Optional[str] = None
     author_id: str
-    comment_text: str
+    comment_text: str = Field(..., max_length=MAX_SUBMISSION_CHARS)
     hidden: bool = False
     created_at: datetime

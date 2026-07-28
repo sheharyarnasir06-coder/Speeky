@@ -775,6 +775,81 @@ Respond ONLY with a JSON object, no prose, in exactly this shape:
 """
 
 
+# ===========================================================================
+# CM-US-02 / CM-US-06: Template Quality + Prompt Confidence — ONE combined call.
+# Both scores judge the same admin-authored template artifact from two related
+# angles (is the CONTENT good vs. will the PROMPT reliably behave), so one Groq
+# round-trip covers both instead of two — same reasoning input, half the latency
+# and cost of separate calls.
+# ===========================================================================
+TEMPLATE_EVALUATION_PROMPT = """You are reviewing a Scenario-Based Learning template before
+an admin publishes it to language learners. Evaluate it on TWO separate dimensions.
+
+Template:
+- Title: {title}
+- Category: {category}
+- Persona (who the AI plays): {persona}
+- Learner-facing intent: {intent}
+- System prompt (AI persona instructions): \"\"\"{system_prompt}\"\"\"
+- Opening line: {opening_line}
+- Target vocabulary: {target_vocab}
+- Goal type: {goal_type}
+- Difficulty: {difficulty}
+
+DIMENSION 1 — Template Quality (content, 0-100): judge prompt completeness, persona
+consistency, scenario clarity, vocabulary relevance to the scenario, and learning
+objective alignment (does the intent/vocab/prompt cohere into something a learner can
+actually practice toward).
+
+DIMENSION 2 — Prompt Confidence (reliability, 0-100): judge instruction clarity, prompt
+ambiguity, persona stability (will the AI likely stay in character), guardrails against
+misuse, and token efficiency (is the prompt unnecessarily verbose/redundant). Specifically:
+- If the prompt is vague or open to multiple interpretations (AMBIGUOUS), lower the
+  confidence score and explain exactly what is ambiguous in confidence_explanation.
+- If the prompt contains two or more instructions that conflict with each other
+  (CONTRADICTORY), keep confidence_warnings non-empty with a warning starting
+  "Publishing warning:" describing the contradiction — this is shown to the admin before
+  they publish, so name the specific conflicting lines.
+- If the prompt is missing obvious safety/behavior constraints for its scenario (e.g. no
+  guidance on how to handle abuse, off-topic requests, or requests for real personal data),
+  list concrete guardrails to add in confidence_guardrail_suggestions (do NOT invent
+  problems that aren't there — empty list if the prompt already guards adequately).
+- If the prompt asks the AI to solicit real personal/financial data from the learner (a
+  password, card number, SSN, OTP, etc.), or to produce harmful/dangerous content, treat
+  this as a severe reliability failure: confidence_score must be 20 or below and
+  confidence_warnings must say so plainly.
+
+Respond ONLY with a JSON object, no prose, in exactly this shape:
+{{
+  "quality_score": <0-100 integer>,
+  "quality_breakdown": {{
+    "prompt_completeness": <0-100>, "persona_consistency": <0-100>,
+    "scenario_clarity": <0-100>, "vocabulary_relevance": <0-100>,
+    "learning_objective_alignment": <0-100>
+  }},
+  "quality_recommendations": ["<short actionable tip>", "..."],
+  "confidence_score": <0-100 integer>,
+  "confidence_explanation": "<1-2 sentence summary of prompt reliability, naming ambiguity if present>",
+  "confidence_warnings": ["<short warning, e.g. 'Publishing warning: line X conflicts with line Y'>", "..."],
+  "confidence_guardrail_suggestions": ["<a specific guardrail to add, or omit/empty if none needed>", "..."]
+}}
+"""
+
+
+def build_template_evaluation_prompt(scenario: Dict) -> str:
+    return TEMPLATE_EVALUATION_PROMPT.format(
+        title=scenario.get("title", ""),
+        category=scenario.get("category", ""),
+        persona=scenario.get("persona", ""),
+        intent=scenario.get("intent", ""),
+        system_prompt=scenario.get("system_prompt", ""),
+        opening_line=scenario.get("opening_line") or "(none set)",
+        target_vocab=", ".join(scenario.get("target_vocab", [])) or "(none)",
+        goal_type=scenario.get("goal_type", "roleplay"),
+        difficulty=scenario.get("difficulty", "intermediate"),
+    )
+
+
 def build_scenario_grading_prompt(scenario_meta: Dict, transcript: str, vocab_used: List[str]) -> str:
     if scenario_meta.get("goal_type") == "negotiation":
         goal_note = ("\nThis was a negotiation scenario — set met_goal true only if the learner "

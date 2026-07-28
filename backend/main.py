@@ -26,6 +26,7 @@ from middlewares.error_handler import (
 )
 from routers.accent_progress_routes import router as accent_progress_router
 from routers.auth_routes import router as auth_router
+from routers.category_routes import router as category_router
 from routers.user_routes import router as user_router
 from routers.assessment_routes import router as assessment_router
 from routers.coaching_routes import router as coaching_router
@@ -92,6 +93,7 @@ async def health():
 
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(user_router, prefix="/api/users")
+app.include_router(category_router, prefix="/api/categories")
 app.include_router(assessment_router, prefix="/api/assessment")
 app.include_router(coaching_router, prefix="/api/coaching")
 app.include_router(conversation_router, prefix="/api/conversation")

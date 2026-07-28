@@ -118,7 +118,7 @@ export default function InterviewCoachSetupPage() {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-serif text-h1 font-semibold text-foreground">
           Interview Coach
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">

@@ -73,7 +73,10 @@ export function AuthShell({
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background lg:flex-row">
       <Link
         href="/"
-        className="absolute left-5 top-5 z-20 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-xs font-medium text-muted-foreground opacity-60 backdrop-blur transition hover:opacity-100"
+        // opacity-60 on already-muted text measured 2.24:1 (light) / 3.06:1 (dark) —
+        // well under AA. Full-strength muted text with a hover shift to foreground
+        // keeps the same recessive feel while staying legible.
+        className="absolute left-5 top-5 z-20 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur transition-colors duration-fast hover:text-foreground"
       >
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to home
@@ -141,7 +144,7 @@ export function AuthShell({
 
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-primary">{eyebrow}</span>
-            <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+            <h1 className="font-serif text-h1 font-semibold text-foreground">
               {title}
             </h1>
             <p className="text-sm leading-6 text-muted-foreground">{description}</p>

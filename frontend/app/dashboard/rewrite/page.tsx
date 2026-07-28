@@ -87,7 +87,7 @@ export default function RewriteLabPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-serif text-h1 font-semibold text-foreground">
           Rewrite Lab
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
@@ -258,7 +258,7 @@ export default function RewriteLabPage() {
             <h2 className="font-serif text-lg font-semibold text-foreground">
               Improvement Score
             </h2>
-            <span className={cn("text-2xl font-semibold", scoreTone(score.overall_score).text)}>
+            <span className={cn("text-h2 font-semibold", scoreTone(score.overall_score).text)}>
               {score.overall_score}
               <span className="text-sm text-muted-foreground">/100</span>
             </span>

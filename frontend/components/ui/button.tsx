@@ -32,7 +32,10 @@ const variantClasses: Record<ButtonVariant, string> = {
   outline:
     "border border-border bg-transparent text-foreground hover:bg-surface",
   ghost: "bg-transparent text-foreground hover:bg-surface",
-  danger: "bg-danger text-primary-foreground hover:bg-danger/90",
+  // White, not --primary-foreground: that token is near-black in dark mode and
+  // rendered 3.89:1 on the red fill (AA needs 4.5:1). The danger fill is a saturated
+  // red in both themes, so white is correct in both — no theme-dependent token needed.
+  danger: "bg-danger text-white hover:bg-danger/90",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

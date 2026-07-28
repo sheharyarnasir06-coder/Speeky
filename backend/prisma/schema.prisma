@@ -8,9 +8,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// SUPER_ADMIN: exactly one account holds this at any time (enforced in
+// user_service.transfer_super_admin's atomic swap, never a plain role PATCH).
 enum Role {
   USER
   ADMIN
+  SUPER_ADMIN
 }
 
 enum AssessmentStatus {
@@ -124,10 +127,10 @@ model User {
   // (YYYY-MM-DD, from the session's start time) of the last qualifying completion — stored
   // as a string so day-boundary math is timezone-honest without a stored offset. streakBadges
   // holds the day-milestones already awarded (7, 30) so a repeat crossing doesn't re-award.
-  currentStreak     Int      @default(0)
-  longestStreak     Int      @default(0)
+  currentStreak     Int     @default(0)
+  longestStreak     Int     @default(0)
   lastChallengeDate String?
-  streakBadges      Int[]    @default([])
+  streakBadges      Int[]   @default([])
 
   @@map("users")
 }
@@ -164,6 +167,12 @@ model ScenarioSession {
   status           String   @default("in_progress") // in_progress | completed | ended_early
   turns            Json     @default("[]") // [{role, content}]
   targetVocab      String[]
+  // full scenario_meta snapshot taken at start_session, so a live
+  // in_progress session keeps using its opening persona/prompt/rules even if an
+  // admin edits (or rolls back) the underlying CustomScenario mid-conversation.
+  // Null on rows created before this field existed — send_turn/_finalize_session
+  // fall back to a live scenario_meta() lookup in that case.
+  scenarioMeta     Json?
   vocabUsed        String[] @default([])
   silenceStreak    Int      @default(0) // consecutive silent/empty turns — 3 in a row auto-closes
   aggressionStreak Int      @default(0) // consecutive aggressive/cursing turns — 2 in a row ends the scenario
@@ -280,26 +289,81 @@ model ScriptPracticeHistory {
   @@map("script_practice_history")
 }
 
-
 // Admin-authored Scenario-Based Learning scenarios. Merged with the
 // built-in lib/prompts.SBL_SCENARIOS at read time. Publishing is just a DB write —
 // no app update needed, per the story's acceptance criteria.
+//
+// CM-US-02/06/07: qualityScore+confidenceScore come from ONE combined LLM call
+// (content_scoring_service.evaluate_template — quality and confidence are judged
+// off the same artifact, so one prompt covers both instead of two round-trips).
+// readinessScore is a deterministic checklist that also requires those two scores
+// to exist and clear a minimum bar. All three are advisory (shown to the admin,
+// never block saving) — there's no separate draft/publish state in this app.
 model CustomScenario {
-  id            String   @id @default(cuid())
-  title         String   @unique
-  category      String
+  id            String    @id @default(cuid())
+  title         String    @unique
+  category      String // validated against Category.name at the service layer (not DB FK — built-ins reuse the same strings without a row)
   persona       String
-  intent        String   @default("") // short blurb shown on the learner's pre-scenario screen
+  intent        String    @default("") // short blurb shown on the learner's pre-scenario screen
   systemPrompt  String
   openingLine   String?
   targetVocab   String[]
-  goalType      String   @default("roleplay") // roleplay | negotiation
-  safetyMode    Boolean  @default(false) // breaks character on a medical-emergency phrase
-  corporateTone Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  goalType      String    @default("roleplay") // roleplay | negotiation
+  safetyMode    Boolean   @default(false) // breaks character on a medical-emergency phrase
+  corporateTone Boolean   @default(true)
+  difficulty    String    @default("intermediate") // beginner | intermediate | advanced (CM-US-07)
+  status        String    @default("ACTIVE") // ACTIVE | ARCHIVED — delete = archive first (CM-US-04 E-03)
+  archivedAt    DateTime? // set on archive, cleared on restore — grace window before auto-purge, see _purge_idle_archives
+  version       Int       @default(1) // bumped on every edit + every rollback
+  sandboxTested Boolean   @default(false) // set from the admin's "Test this scenario" pass (CM-US-01 acceptance)
+
+  qualityScore       Int?
+  qualityFeedback    Json? // {breakdown: {...5 dims}, recommendations: [...]}
+  confidenceScore    Int?
+  confidenceFeedback Json? // {explanation, warnings: [...]}
+  scoredAt           DateTime?
+  readinessScore     Int?
+  readinessChecklist Json? // {ready, checks: {...}, missing: [...]}
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  versions CustomScenarioVersion[]
 
   @@map("custom_scenarios")
+}
+
+// CM-US-04: one snapshot per prior version, written just before every edit/rollback
+// applies — so "Rollback" always has something to restore to, and rolling back is
+// itself non-destructive (the pre-rollback state gets snapshotted too).
+model CustomScenarioVersion {
+  id         String         @id @default(cuid())
+  scenarioId String
+  scenario   CustomScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  version    Int
+  snapshot   Json // full field snapshot at that version (see scenario_service._snapshot_fields)
+  createdAt  DateTime       @default(now())
+
+  @@index([scenarioId, version])
+  @@map("custom_scenario_versions")
+}
+
+// CM-US-05: category taxonomy. Not a DB FK on CustomScenario.category — built-in
+// SBL_SCENARIOS (lib/prompts.py) reuse these same name strings without a row of
+// their own, so membership is checked at the service layer instead. `protected`
+// categories are the 4 seeded at migration time that built-ins depend on — they
+// can be renamed/re-iconed but never deleted.
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  icon      String   @default("folder") // key into frontend's curated lucide icon map
+  order     Int      @default(0)
+  protected Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("categories")
 }
 
 // Workplace English Coach session (WEC-US-08 .. WEC-US-12).

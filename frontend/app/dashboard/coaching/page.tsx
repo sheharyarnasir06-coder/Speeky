@@ -40,7 +40,7 @@ export default function CoachingPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-serif text-h1 font-semibold text-foreground">
           Workplace English Coach
         </h1>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">

@@ -18,6 +18,7 @@ from lib.recording_engine import RecordingAnalysis
 from lib.speech_config import load_speech_config
 from lib.text_alignment import WordStatus
 from schemas.pronunciation_schemas import WordResultSchema
+from utils.feature_errors import InvalidSubmissionError
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +113,16 @@ async def update_user_accent_preference(
     user_id: str, preference: str, sub_dialect: Optional[str] = None
 ) -> Tuple[str, Optional[str], Optional[str]]:
     """Update user's accent model preference and optional sub-dialect preference."""
+    # Rejecting caller input is a 400, not a server fault: a bare ValueError here reached
+    # the catch-all handler and surfaced as HTTP 500 "Something went wrong!", which hid a
+    # plain validation problem and polluted error monitoring with fake server errors.
     if preference not in VALID_ACCENT_MODELS:
-        raise ValueError(f"Invalid accent model preference: {preference}. Must be one of {VALID_ACCENT_MODELS}")
+        raise InvalidSubmissionError(
+            f"Invalid accent model preference: {preference}. Must be one of {sorted(VALID_ACCENT_MODELS)}")
 
     if sub_dialect and sub_dialect not in VALID_SUB_DIALECTS:
-        raise ValueError(f"Invalid sub-dialect preference: {sub_dialect}. Must be one of {VALID_SUB_DIALECTS}")
+        raise InvalidSubmissionError(
+            f"Invalid sub-dialect preference: {sub_dialect}. Must be one of {sorted(VALID_SUB_DIALECTS)}")
 
     saved_sub = sub_dialect if preference == "south_asian_pakistani" else None
 

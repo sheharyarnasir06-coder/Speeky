@@ -30,6 +30,7 @@ from lib.prisma_client import db
 from lib.session_scorer import AudioFeatures, ScoredSession
 from lib.speech_config import load_speech_config
 from middlewares.auth_middleware import require_auth
+from utils.feature_errors import InvalidSubmissionError, SessionNotFoundError
 from schemas.public_speaking_schemas import (
     PublicSpeakingScorecard,
     PublicSpeakingSession,
@@ -160,7 +161,7 @@ async def submit_turn(
     """Process a speech turn (audio or text) and return analysis"""
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
-        raise ValueError("Session not found")
+        raise SessionNotFoundError("Public speaking session not found")
     
     speech_config = SPEECH_TYPES.get(session.speechType, SPEECH_TYPES["business_pitch"])
     
@@ -250,10 +251,10 @@ async def submit_qa_response(
     """Process Q&A response and evaluate performance"""
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
-        raise ValueError("Session not found")
+        raise SessionNotFoundError("Public speaking session not found")
     
     if session.status != "qa_phase":
-        raise ValueError("Session not in Q&A phase")
+        raise InvalidSubmissionError("This session is not in the Q&A phase.")
     
     # Process response
     if response.audio_data:
@@ -320,7 +321,7 @@ async def get_session(session_id: str, user_id: str) -> Dict:
     """Get session details"""
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
-        raise ValueError("Session not found")
+        raise SessionNotFoundError("Public speaking session not found")
     
     return {
         "session_id": session.id,

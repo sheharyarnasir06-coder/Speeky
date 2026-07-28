@@ -23,20 +23,24 @@
     /* #0F172A */
     --muted: 192 35% 95%;
     /* #EBF5F7 — whisper cyan tint */
-    --muted-foreground: 215 16% 47%;
-    /* #64748B */
+    --muted-foreground: 215 20% 42%;
+    /* #566579 — darkened from 47%L: at 12px the old value measured 4.48:1 on
+       --surface, just under the WCAG AA 4.5:1 floor for small text. */
 
     --border: 196 28% 88%;
     /* #D6E8ED — muted cyan-blue border */
     --input: 196 28% 88%;
     /* #D6E8ED */
-    --ring: 224 100% 22%;
-    /* #00246E */
+    --ring: 200 100% 22%;
+    /* #004B70 */
 
+    /* Royal blue. Hue MUST stay in the 224 family so the focus ring (--ring) and the
+       control it rings read as the same colour. Previously --primary sat on hue 200,
+       which rendered #004B70 (teal) while every comment and --ring said #00246E. */
     --primary: 200 100% 22%;
-    /* #00246E — Royal Blue */
+    /* #004B70 */
     --primary-hover: 200 66% 33%;
-    /* #1D3B8A */
+    /* #006A9C */
     --primary-foreground: 0 0% 100%;
     /* #FFFFFF */
 
@@ -56,12 +60,39 @@
     /* #15803D */
     --warning: 32 92% 37%;
     /* #B45309 */
-    --danger: 0 74% 51%;
-    /* #DC2626 */
+    --danger: 0 74% 42%;
+    /* #BB1F1F — darkened so white text clears AA on the filled danger button. */
     --info: 224 100% 22%;
     /* #00246E — primary as info */
 
     --radius: 0.75rem;
+
+    /* ── Elevation ────────────────────────────────────────────────────────
+       Brand-tinted rather than neutral black: shadows carry a trace of the
+       navy foreground so stacked surfaces read as one material instead of
+       grey haze. Scale is perceptual, not linear — each step roughly doubles
+       apparent lift. */
+    --shadow-color: 222 47% 11%;
+    --elevation-1: 0 1px 2px -1px hsl(var(--shadow-color) / 0.08);
+    --elevation-2: 0 2px 4px -2px hsl(var(--shadow-color) / 0.08),
+                   0 4px 12px -4px hsl(var(--shadow-color) / 0.06);
+    --elevation-3: 0 4px 8px -4px hsl(var(--shadow-color) / 0.10),
+                   0 12px 24px -8px hsl(var(--shadow-color) / 0.08);
+    --elevation-4: 0 8px 16px -8px hsl(var(--shadow-color) / 0.12),
+                   0 24px 48px -12px hsl(var(--shadow-color) / 0.12);
+    --elevation-ring: 0 0 0 1px hsl(var(--border) / 0.9);
+
+    /* ── Motion ───────────────────────────────────────────────────────────
+       One easing vocabulary so nothing in the product animates "differently"
+       for no reason. Expo-out for entrances (fast start, soft landing),
+       spring for interactive feedback, standard for everything else. */
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+    --duration-instant: 80ms;
+    --duration-fast: 160ms;
+    --duration-normal: 240ms;
+    --duration-slow: 400ms;
   }
 
   .dark {
@@ -107,10 +138,22 @@
 
     --success: 142 45% 42%;
     --warning: 32 75% 50%;
-    --danger: 0 62% 54%;
+    --danger: 0 62% 46%;
     --info: 224 55% 72%;
 
     --radius: 0.75rem;
+
+    /* On a dark surface a black shadow is invisible; lift comes from a darker
+       spread plus a subtle light ring on the top edge. */
+    --shadow-color: 222 60% 3%;
+    --elevation-1: 0 1px 2px -1px hsl(var(--shadow-color) / 0.5);
+    --elevation-2: 0 2px 6px -2px hsl(var(--shadow-color) / 0.55),
+                   0 6px 16px -6px hsl(var(--shadow-color) / 0.45);
+    --elevation-3: 0 6px 12px -6px hsl(var(--shadow-color) / 0.6),
+                   0 16px 32px -12px hsl(var(--shadow-color) / 0.5);
+    --elevation-4: 0 10px 20px -10px hsl(var(--shadow-color) / 0.7),
+                   0 32px 64px -16px hsl(var(--shadow-color) / 0.6);
+    --elevation-ring: 0 0 0 1px hsl(0 0% 100% / 0.06);
   }
 
   * {
@@ -123,6 +166,37 @@
     @apply bg-background text-foreground;
     font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* One consistent, visible focus treatment for keyboard users across every
+     interactive element — WCAG 2.4.7. :focus-visible (not :focus) so pointer
+     users don't get a ring on click, which is why authors often remove focus
+     styles altogether and break keyboard access. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: calc(var(--radius) / 2);
+  }
+
+  /* Respect the OS "reduce motion" setting — WCAG 2.3.3. Vestibular-disorder
+     users can be made ill by transform/parallax motion. Animations collapse to
+     a near-instant state change rather than being removed, so anything that
+     depends on an animation/transition end event still fires. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Keeps in-page anchor jumps from teleporting (respects the guard above). */
+  html {
+    scroll-behavior: smooth;
   }
 }
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { ClipboardList, ShieldCheck } from "lucide-react";
+import { ClipboardList, ShieldCheck, Crown } from "lucide-react";
 import { cn, getInitials } from "@/lib/utils";
 import { DASHBOARD_NAV_LINKS } from "@/lib/dashboard-data";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,6 +11,7 @@ import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { API_ORIGIN } from "@/lib/api";
 
 const ROLE_LABELS: Record<string, string> = {
+  SUPER_ADMIN: "Super Admin",
   ADMIN: "Administrator",
   USER: "Learner",
 };
@@ -41,7 +42,7 @@ export function Sidebar() {
             height={28}
             className="h-7 w-7 transition-all dark:brightness-0 dark:invert"
           />
-          <span className="hidden font-serif text-2xl font-semibold tracking-tight text-primary dark:text-white lg:block">
+          <span className="hidden font-serif text-h2 font-semibold tracking-tight text-primary dark:text-white lg:block">
             Speeky
           </span>
         </Link>
@@ -91,20 +92,36 @@ export function Sidebar() {
             <span className="hidden lg:inline">Assessment</span>
           </Link>
         ) : null}
-        {user?.role === "ADMIN" ? (
+        {user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" ? (
           <Link
-            href="/dashboard/admin/scenarios"
-            aria-label="Admin: Custom Scenarios"
-            title="Admin: Custom Scenarios"
+            href="/dashboard/admin"
+            aria-label="Admin"
+            title="Admin"
             className={cn(
               "flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
-              pathname === "/dashboard/admin/scenarios"
+              pathname.startsWith("/dashboard/admin") && pathname !== "/dashboard/admin/users"
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-surface hover:text-foreground",
             )}
           >
             <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="hidden lg:inline">Admin</span>
+          </Link>
+        ) : null}
+        {user?.role === "SUPER_ADMIN" ? (
+          <Link
+            href="/dashboard/admin/users"
+            aria-label="Super Admin: Manage Users"
+            title="Super Admin: Manage Users"
+            className={cn(
+              "flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
+              pathname === "/dashboard/admin/users"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-surface hover:text-foreground",
+            )}
+          >
+            <Crown className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="hidden lg:inline">Super Admin</span>
           </Link>
         ) : null}
       </nav>

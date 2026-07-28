@@ -17,6 +17,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from schemas.limits import MAX_SHORT_TEXT_CHARS, MAX_UTTERANCE_CHARS
+
 
 class DifficultyLevel(str, Enum):
     """The four learner-facing rewrite tiers from PSA-US-06.
@@ -34,9 +36,11 @@ class DifficultyLevel(str, Enum):
 
 # ── US-158: Personalized Rewrite Difficulty ───────────────────────────────────
 class GenerateRewriteRequest(BaseModel):
-    original: str = Field(..., min_length=1, description="The learner's own wording to improve")
+    original: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS,
+                          description="The learner's own wording to improve")
     context: Optional[str] = Field(
-        None, description="Optional situation hint, e.g. 'HR interview answer' or 'client email'"
+        None, max_length=MAX_SHORT_TEXT_CHARS,
+        description="Optional situation hint, e.g. 'HR interview answer' or 'client email'"
     )
     # None => auto-detect from the learner's assessed level (E-01 defaults to intermediate).
     difficulty: Optional[DifficultyLevel] = Field(
@@ -71,8 +75,8 @@ class GenerateRewriteResponse(BaseModel):
 
 
 class ValidateRewriteRequest(BaseModel):
-    original: str = Field(..., min_length=1)
-    rewrite: str = Field(..., min_length=1)
+    original: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS)
+    rewrite: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS)
     difficulty: Optional[DifficultyLevel] = Field(
         None, description="Optional level, so vocabulary-complexity is judged against the right tier"
     )
@@ -86,8 +90,8 @@ class DimensionScore(BaseModel):
 
 
 class ScoreRewriteRequest(BaseModel):
-    original: str = Field(..., min_length=1)
-    rewrite: str = Field(..., min_length=1)
+    original: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS)
+    rewrite: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS)
 
 
 class ScoreRewriteResponse(BaseModel):
@@ -108,8 +112,8 @@ class ChangeExplanation(BaseModel):
 
 
 class ExplainRewriteRequest(BaseModel):
-    original: str = Field(..., min_length=1)
-    rewrite: str = Field(..., min_length=1)
+    original: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS)
+    rewrite: str = Field(..., min_length=1, max_length=MAX_UTTERANCE_CHARS)
 
 
 class ExplainRewriteResponse(BaseModel):

@@ -338,7 +338,7 @@ export default function AssessmentPage() {
           <Loader2 className="h-8 w-8 animate-spin" />
         </div>
         <div className="flex flex-col gap-2">
-          <h1 className="font-serif text-2xl font-semibold text-foreground">
+          <h1 className="font-serif text-h2 font-semibold text-foreground">
             Analyzing your responses...
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -388,7 +388,7 @@ export default function AssessmentPage() {
         <span className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-primary">
           <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
         </span>
-        <h1 className="font-serif text-2xl font-semibold text-foreground">
+        <h1 className="font-serif text-h2 font-semibold text-foreground">
           You&apos;ve already completed your baseline assessment
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -409,7 +409,7 @@ export default function AssessmentPage() {
           <ClipboardList className="h-6 w-6" aria-hidden="true" />
         </span>
         <div className="flex flex-col gap-2">
-          <h1 className="font-serif text-2xl font-semibold text-foreground">
+          <h1 className="font-serif text-h2 font-semibold text-foreground">
             Baseline Communication Assessment
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -556,7 +556,7 @@ export default function AssessmentPage() {
           className="mx-auto h-6 w-6 animate-fade-in"
           aria-hidden="true"
         />
-        <h1 className="mt-3 font-serif text-2xl font-semibold">
+        <h1 className="mt-3 font-serif text-h2 font-semibold">
           {summary.positive_framing.title}
         </h1>
         <p className="mt-2 text-sm text-primary-foreground/85">

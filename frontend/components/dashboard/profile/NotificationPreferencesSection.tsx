@@ -89,24 +89,28 @@ export function NotificationPreferencesSection() {
           <p className="text-xs text-muted-foreground">
             No push notifications during this window, even overnight.
           </p>
-          <div className="mt-2 flex items-center gap-3">
-            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          {/* A native time input carries a fixed intrinsic width, so two of them plus
+              the separator overflowed a 375px viewport by 23px. min-w-0 lets the flex
+              items shrink below that intrinsic size, and the row wraps as a last
+              resort on the narrowest phones. */}
+          <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-2">
+            <label className="flex min-w-0 flex-1 basis-28 flex-col gap-1 text-xs text-muted-foreground">
               From
               <input
                 type="time"
                 value={quietStart}
                 onChange={(e) => setQuietStart(e.target.value)}
-                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground"
+                className="w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground"
               />
             </label>
-            <span className="mt-4 text-muted-foreground">–</span>
-            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            <span className="pb-2 text-muted-foreground" aria-hidden="true">–</span>
+            <label className="flex min-w-0 flex-1 basis-28 flex-col gap-1 text-xs text-muted-foreground">
               To
               <input
                 type="time"
                 value={quietEnd}
                 onChange={(e) => setQuietEnd(e.target.value)}
-                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground"
+                className="w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground"
               />
             </label>
           </div>

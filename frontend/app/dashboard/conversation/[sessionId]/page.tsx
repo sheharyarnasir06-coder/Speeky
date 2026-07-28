@@ -325,7 +325,7 @@ export default function ConversationSessionPage() {
       <div className="mx-auto flex max-w-xl flex-col gap-6">
         <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
           <CheckCircle2 className="mx-auto h-6 w-6" aria-hidden="true" />
-          <h1 className="mt-3 font-serif text-2xl font-semibold">
+          <h1 className="mt-3 font-serif text-h2 font-semibold">
             Session Complete
           </h1>
           <p className="mt-2 text-sm text-primary-foreground/85">
@@ -401,7 +401,7 @@ export default function ConversationSessionPage() {
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       {gate}
       <div className="flex items-center justify-between">
-        <h1 className="font-serif text-2xl font-semibold text-foreground">
+        <h1 className="font-serif text-h2 font-semibold text-foreground">
           {topicLabel || "Conversation"}
         </h1>
         <div className="flex items-center gap-2">

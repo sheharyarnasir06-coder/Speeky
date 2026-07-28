@@ -1,6 +1,8 @@
 """Public Speaking Coach schemas for PSC-US-01, PSC-US-03, PSC-US-04, PSC-US-05, PSC-US-06, PSC-US-07, PSC-US-11, PSC-US-12, PSC-US-14"""
 
 from pydantic import BaseModel, Field
+
+from schemas.limits import MAX_SHORT_TEXT_CHARS, MAX_SUBMISSION_CHARS
 from typing import Optional, List, Dict, Literal
 
 
@@ -8,7 +10,7 @@ class StartPublicSpeakingSchema(BaseModel):
     """Request to start a public speaking session"""
     speech_type: Literal["business_pitch", "casual_event", "motivational", "classroom", "ted_talk"]
     input_mode: Literal["audio", "text"] = Field(default="audio", description="Audio or text input")
-    topic: Optional[str] = Field(None, description="Optional topic/prompt for the speech")
+    topic: Optional[str] = Field(None, max_length=MAX_SHORT_TEXT_CHARS, description="Optional topic/prompt for the speech")
 
 
 class PublicSpeakingTurnSchema(BaseModel):
@@ -21,7 +23,7 @@ class PublicSpeakingTurnSchema(BaseModel):
     backend). audio_data is the legacy base64-upload path, still accepted.
     """
     audio_data: Optional[str] = Field(None, description="Base64 encoded audio file (legacy path)")
-    text_content: Optional[str] = Field(None, description="Transcript (voice) or typed text")
+    text_content: Optional[str] = Field(None, max_length=MAX_SUBMISSION_CHARS, description="Transcript (voice) or typed text")
     duration_seconds: Optional[float] = Field(None, description="Spoken duration, when voice")
     audio_features: Optional[Dict] = Field(
         None,
@@ -34,7 +36,7 @@ class PublicSpeakingTurnSchema(BaseModel):
 class QAResponseSchema(BaseModel):
     """Response to AI-generated Q&A question"""
     audio_data: Optional[str] = Field(None, description="Base64 encoded audio response (legacy)")
-    text_content: Optional[str] = Field(None, description="Transcript (voice) or typed text")
+    text_content: Optional[str] = Field(None, max_length=MAX_SUBMISSION_CHARS, description="Transcript (voice) or typed text")
     duration_seconds: Optional[float] = Field(None, description="Spoken duration, when voice")
 
 

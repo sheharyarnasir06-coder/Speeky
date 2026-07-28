@@ -120,7 +120,44 @@ export async function getScenarioSession(sessionId: string): Promise<ScenarioEnd
   };
 }
 
-// ── Admin: custom scenario CRUD (SBL-US-06) ─────────────────────────────────
+// ── Admin: custom scenario CRUD (SBL-US-06, CM-US-01 .. CM-US-07) ───────────
+export type ScenarioDifficulty = "beginner" | "intermediate" | "advanced";
+export type ScenarioStatus = "ACTIVE" | "ARCHIVED";
+
+export interface QualityFeedback {
+  breakdown: Record<string, number>;
+  recommendations: string[];
+  source: "llm" | "offline";
+}
+
+export interface ConfidenceFeedback {
+  explanation: string;
+  warnings: string[];
+  guardrail_suggestions: string[];
+  source: "llm" | "offline";
+}
+
+// Body of the 400 response when create/update is blocked by the publish gate
+// (CM-US-02/06/07) — `gate: "not_tested"` is never bypassable; `"needs_acknowledgment"`
+// can be resubmitted with `quality_acknowledged: true`.
+export interface PublishGateError {
+  error: string;
+  gate: "not_tested" | "needs_acknowledgment";
+  quality_score?: number;
+  confidence_score?: number;
+  quality_recommendations?: string[];
+  confidence_warnings?: string[];
+  guardrail_suggestions?: string[];
+  readiness_missing?: string[];
+}
+
+export interface ReadinessChecklist {
+  ready: boolean;
+  score: number;
+  checks: Record<string, boolean>;
+  missing: string[];
+}
+
 export interface CustomScenario {
   id: string;
   title: string;
@@ -131,8 +168,20 @@ export interface CustomScenario {
   opening_line: string | null;
   target_vocab: string[];
   goal_type: "roleplay" | "negotiation";
+  difficulty: ScenarioDifficulty;
   safety_mode: boolean;
   corporate_tone: boolean;
+  status: ScenarioStatus;
+  archived_at: string | null;
+  version: number;
+  sandbox_tested: boolean;
+  quality_score: number | null;
+  quality_feedback: QualityFeedback | null;
+  confidence_score: number | null;
+  confidence_feedback: ConfidenceFeedback | null;
+  scored_at: string | null;
+  readiness_score: number | null;
+  readiness_checklist: ReadinessChecklist | null;
   created_at: string;
   updated_at: string;
 }
@@ -146,8 +195,17 @@ export interface CustomScenarioInput {
   opening_line?: string;
   target_vocab: string[];
   goal_type: "roleplay" | "negotiation";
+  difficulty: ScenarioDifficulty;
   safety_mode: boolean;
   corporate_tone: boolean;
+  tested: boolean;
+  quality_acknowledged: boolean;
+}
+
+export interface ScenarioVersionEntry {
+  version: number;
+  snapshot: Record<string, unknown>;
+  created_at: string;
 }
 
 export function adminListCustomScenarios() {
@@ -168,9 +226,44 @@ export function adminUpdateCustomScenario(id: string, data: CustomScenarioInput)
   });
 }
 
-export function adminDeleteCustomScenario(id: string) {
-  return api<null>(`/scenarios/admin/custom/${id}`, {
+// Archives rather than hard-deletes (CM-US-04 E-03) — kept for anyone still
+// mid-session, hidden from new learner sessions, restorable by an admin.
+export function adminArchiveCustomScenario(id: string) {
+  return api<CustomScenario>(`/scenarios/admin/custom/${id}`, {
     method: "DELETE",
+  });
+}
+
+export function adminRestoreCustomScenario(id: string) {
+  return api<CustomScenario>(`/scenarios/admin/custom/${id}/restore`, {
+    method: "POST",
+  });
+}
+
+export function adminListScenarioVersions(id: string) {
+  return api<{ current_version: number; versions: ScenarioVersionEntry[] }>(
+    `/scenarios/admin/custom/${id}/versions`,
+  );
+}
+
+export function adminRollbackCustomScenario(id: string, version: number) {
+  return api<CustomScenario>(`/scenarios/admin/custom/${id}/rollback/${version}`, {
+    method: "POST",
+  });
+}
+
+// CM-US-02 / CM-US-06: one combined LLM call scoring both Template Quality and
+// Prompt Confidence.
+export function adminEvaluateTemplate(id: string) {
+  return api<CustomScenario>(`/scenarios/admin/custom/${id}/evaluate`, {
+    method: "POST",
+  });
+}
+
+// CM-US-07: deterministic readiness checklist (auto-runs evaluate first if unscored).
+export function adminAssessReadiness(id: string) {
+  return api<CustomScenario>(`/scenarios/admin/custom/${id}/readiness`, {
+    method: "POST",
   });
 }
 

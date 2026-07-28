@@ -55,7 +55,7 @@ export default function MeetingPrepFeedbackPage() {
       </Link>
 
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-serif text-h1 font-semibold text-foreground">
           Meeting Preparation — Session Feedback
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">

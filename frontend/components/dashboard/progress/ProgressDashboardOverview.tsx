@@ -74,7 +74,7 @@ export function ProgressDashboardOverview() {
           <Sparkles className="h-7 w-7" />
         </div>
         <div className="flex flex-col gap-1 max-w-md">
-          <h2 className="font-serif text-2xl font-semibold text-foreground">
+          <h2 className="font-serif text-h2 font-semibold text-foreground">
             Welcome to Your Learning Journey!
           </h2>
           <p className="text-sm text-muted-foreground">

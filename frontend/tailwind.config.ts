@@ -54,9 +54,36 @@ const config = {
         serif: ["var(--font-heading)", "Georgia", "serif"],
         heading: ["var(--font-heading)", "system-ui", "sans-serif"],
       },
+      // Elevation reads from CSS variables so light and dark each get shadows
+      // tuned for their surface — a black shadow is invisible on navy.
+      // sm/md keep their original names so existing markup is untouched.
       boxShadow: {
-        sm: "0 1px 2px 0 rgb(15 23 42 / 0.04)",
-        md: "0 4px 12px -2px rgb(15 23 42 / 0.08)",
+        xs: "var(--elevation-1)",
+        sm: "var(--elevation-1)",
+        md: "var(--elevation-2)",
+        lg: "var(--elevation-3)",
+        xl: "var(--elevation-4)",
+        ring: "var(--elevation-ring)",
+      },
+      transitionTimingFunction: {
+        "out-expo": "var(--ease-out-expo)",
+        spring: "var(--ease-spring)",
+        standard: "var(--ease-standard)",
+      },
+      transitionDuration: {
+        instant: "var(--duration-instant)",
+        fast: "var(--duration-fast)",
+        normal: "var(--duration-normal)",
+        slow: "var(--duration-slow)",
+      },
+      // Explicit type scale: previously every heading picked an ad-hoc text-*
+      // size, so the same visual level rendered differently on different pages.
+      fontSize: {
+        display: ["clamp(2.25rem, 1.5rem + 3vw, 3.5rem)", { lineHeight: "1.05", letterSpacing: "-0.03em", fontWeight: "600" }],
+        h1: ["clamp(1.75rem, 1.4rem + 1.4vw, 2.25rem)", { lineHeight: "1.15", letterSpacing: "-0.02em", fontWeight: "600" }],
+        h2: ["clamp(1.375rem, 1.2rem + 0.7vw, 1.625rem)", { lineHeight: "1.25", letterSpacing: "-0.015em", fontWeight: "600" }],
+        h3: ["1.125rem", { lineHeight: "1.35", letterSpacing: "-0.01em", fontWeight: "600" }],
+        overline: ["0.6875rem", { lineHeight: "1.2", letterSpacing: "0.08em", fontWeight: "600" }],
       },
       keyframes: {
         "fade-up": {
@@ -79,13 +106,29 @@ const config = {
           "0%": { opacity: "0", transform: "translateX(-16px)" },
           "100%": { opacity: "1", transform: "translateX(0)" },
         },
+        // Sweeping highlight for skeletons — communicates "loading", not "broken".
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
+        },
+        // Confidence/score reveal: bar grows from zero so progress reads as earned.
+        "grow-x": {
+          "0%": { transform: "scaleX(0)" },
+          "100%": { transform: "scaleX(1)" },
+        },
+        "scale-in": {
+          "0%": { opacity: "0", transform: "scale(0.96)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
       },
       animation: {
-        "fade-up": "fade-up 300ms ease-out both",
-        "fade-in": "fade-in 200ms ease-out both",
+        "fade-up": "fade-up 300ms var(--ease-out-expo) both",
+        "fade-in": "fade-in 200ms var(--ease-standard) both",
         "gradient-shift": "gradient-shift 8s ease infinite",
-        "slide-in-right": "slide-in-right 250ms ease-out both",
-        "slide-in-left": "slide-in-left 250ms ease-out both",
+        "slide-in-right": "slide-in-right 250ms var(--ease-out-expo) both",
+        "slide-in-left": "slide-in-left 250ms var(--ease-out-expo) both",
+        shimmer: "shimmer 1.6s infinite",
+        "grow-x": "grow-x 600ms var(--ease-out-expo) both",
+        "scale-in": "scale-in 200ms var(--ease-spring) both",
       },
     },
   },

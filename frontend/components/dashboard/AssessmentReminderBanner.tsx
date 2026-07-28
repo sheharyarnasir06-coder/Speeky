@@ -26,13 +26,13 @@ export function AssessmentReminderBanner() {
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
-      <div className="flex w-full max-w-md animate-fade-up flex-col items-center gap-6 rounded-2xl border border-border bg-surface-elevated p-8 text-center shadow-2xl">
+      <div className="flex w-full max-w-md animate-fade-up flex-col items-center gap-6 rounded-2xl border border-border bg-surface-elevated p-8 text-center shadow-xl">
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-warning/10 text-warning">
           <Lock className="h-8 w-8" aria-hidden="true" />
         </div>
 
         <div className="flex flex-col gap-2">
-          <h2 className="font-serif text-2xl font-semibold text-foreground">
+          <h2 className="font-serif text-h2 font-semibold text-foreground">
             Assessment Required
           </h2>
           <p className="text-base text-muted-foreground">

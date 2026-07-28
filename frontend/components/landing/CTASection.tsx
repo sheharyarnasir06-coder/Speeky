@@ -6,7 +6,7 @@ export function CTASection() {
     <section id="cta" className="py-24">
       <div className="container">
         <div className="relative overflow-hidden rounded-2xl border border-border bg-[radial-gradient(80%_120%_at_50%_0%,hsl(var(--secondary))_0%,hsl(var(--surface))_100%)] px-8 py-16 text-center shadow-sm sm:px-16">
-          <h2 className="text-balance font-serif text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          <h2 className="text-balance font-serif text-h1 font-semibold text-foreground sm:text-4xl">
             Start speaking with confidence today
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-balance text-base text-muted-foreground sm:text-lg">

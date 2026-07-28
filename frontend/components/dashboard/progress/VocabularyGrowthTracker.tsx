@@ -8,6 +8,11 @@ import {
   type ProgressDashboardOverview,
 } from "@/lib/progressDashboard";
 import { cn } from "@/lib/utils";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
+import { StatTile } from "@/components/ui/stat-tile";
 import { VocabularyDrillDownModal } from "./VocabularyDrillDownModal";
 
 function formatPracticeTime(minutes: number): string {
@@ -27,6 +32,8 @@ interface MetricTile {
   label: string;
   value: string;
   icon: typeof Clock;
+  /** 0-100 for the inline meter; null for non-scored metrics like time. */
+  meter: number | null;
 }
 
 /** PDG-US-14: Progress Dashboard - Vocabulary Growth Tracker. */
@@ -43,19 +50,15 @@ export function VocabularyGrowthTracker() {
       .finally(() => setIsLoading(false));
   }, []);
 
-  if (isLoading) {
-    return (
-      <div className="rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
-        <p className="text-sm text-muted-foreground">Loading your progress…</p>
-      </div>
-    );
-  }
+  if (isLoading) return <SkeletonCard />;
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
-        <p className="text-sm text-danger">{error}</p>
-      </div>
+      <Card className="p-6">
+        <Alert tone="danger" title="Couldn't load your progress">
+          {error}
+        </Alert>
+      </Card>
     );
   }
 
@@ -64,56 +67,32 @@ export function VocabularyGrowthTracker() {
   const { metrics, vocabulary_growth: growth, vocabulary_history: history } = overview;
 
   const tiles: MetricTile[] = [
-    { id: "time", label: "Practice Time", value: formatPracticeTime(metrics.practice_time_minutes), icon: Clock },
-    { id: "confidence", label: "Confidence", value: formatScore(metrics.confidence_score), icon: Gauge },
-    { id: "fluency", label: "Fluency", value: formatScore(metrics.fluency_score), icon: TrendingUp },
-    { id: "vocabulary", label: "Vocabulary", value: formatScore(metrics.vocabulary_score), icon: BookOpen },
+    { id: "time", label: "Practice Time", value: formatPracticeTime(metrics.practice_time_minutes), icon: Clock, meter: null },
+    { id: "confidence", label: "Confidence", value: formatScore(metrics.confidence_score), icon: Gauge, meter: metrics.confidence_score },
+    { id: "fluency", label: "Fluency", value: formatScore(metrics.fluency_score), icon: TrendingUp, meter: metrics.fluency_score },
+    { id: "vocabulary", label: "Vocabulary", value: formatScore(metrics.vocabulary_score), icon: BookOpen, meter: metrics.vocabulary_score },
   ];
 
   return (
-    <div className="rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
+    <Card className="p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-serif text-xl font-semibold text-foreground">
-          Vocabulary Growth
-        </h2>
-        <span className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
-          All Time
-        </span>
+        <h2 className="font-serif text-h2 text-foreground">Vocabulary Growth</h2>
+        <Badge tone="brand" size="md">All Time</Badge>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {tiles.map((tile) => {
           const isVocabularyTile = tile.id === "vocabulary";
           return (
-            <div
+            <StatTile
               key={tile.id}
+              label={tile.label}
+              value={tile.value}
+              icon={tile.icon}
+              meter={tile.meter}
+              hint={isVocabularyTile ? "See every word you've collected" : undefined}
               onClick={isVocabularyTile ? () => setIsDrillDownOpen(true) : undefined}
-              role={isVocabularyTile ? "button" : undefined}
-              tabIndex={isVocabularyTile ? 0 : undefined}
-              onKeyDown={
-                isVocabularyTile
-                  ? (event) => {
-                      if (event.key === "Enter" || event.key === " ") setIsDrillDownOpen(true);
-                    }
-                  : undefined
-              }
-              className={cn(
-                "flex flex-col gap-2 rounded-xl border border-border bg-surface p-4",
-                isVocabularyTile &&
-                  "cursor-pointer transition-colors hover:border-primary/40 hover:bg-secondary",
-              )}
-            >
-              <span className="flex items-center justify-between gap-1.5 text-xs font-medium text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <tile.icon className="h-3.5 w-3.5" aria-hidden="true" />
-                  {tile.label}
-                </span>
-                {isVocabularyTile ? <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-              </span>
-              <span className="font-serif text-2xl font-semibold text-foreground">
-                {tile.value}
-              </span>
-            </div>
+            />
           );
         })}
       </div>
@@ -179,6 +158,6 @@ export function VocabularyGrowthTracker() {
       )}
 
       <VocabularyDrillDownModal open={isDrillDownOpen} onClose={() => setIsDrillDownOpen(false)} />
-    </div>
+    </Card>
   );
 }

@@ -13,24 +13,18 @@ import {
   UserSquare2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  EXPLORE_CATEGORIES,
-  EXPLORE_CATEGORY_ICONS,
-  EXPLORE_STATIC_SCENARIOS,
-  type ExploreCategory,
-  type ExploreScenario,
-} from "@/lib/dashboard-data";
+import { EXPLORE_STATIC_SCENARIOS, type ExploreScenario } from "@/lib/dashboard-data";
 import { getScenarios, type ScenarioListItem } from "@/lib/scenario";
+import { listCategories, type Category } from "@/lib/categories";
+import { resolveIcon } from "@/lib/icon-map";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 
-function toExploreScenario(scenario: ScenarioListItem): ExploreScenario {
-  const category = (EXPLORE_CATEGORIES as string[]).includes(scenario.category)
-    ? (scenario.category as ExploreCategory)
-    : "Daily Life";
+function toExploreScenario(scenario: ScenarioListItem, categories: Category[]): ExploreScenario {
+  const match = categories.find((c) => c.name === scenario.category);
   return {
     id: scenario.key,
-    category,
-    icon: EXPLORE_CATEGORY_ICONS[category],
+    category: scenario.category,
+    icon: resolveIcon(match?.icon ?? "folder"),
     title: scenario.label,
     description: scenario.intent,
     difficulty:
@@ -42,9 +36,8 @@ function toExploreScenario(scenario: ScenarioListItem): ExploreScenario {
 export default function ExplorePage() {
   const { access } = useAssessmentAccess();
   const [query, setQuery] = React.useState("");
-  const [category, setCategory] = React.useState<ExploreCategory | "All">(
-    "All",
-  );
+  const [category, setCategory] = React.useState<string>("All");
+  const [categories, setCategories] = React.useState<Category[]>([]);
   const [liveScenarios, setLiveScenarios] = React.useState<ExploreScenario[]>(
     [],
   );
@@ -53,12 +46,27 @@ export default function ExplorePage() {
 
   React.useEffect(() => {
     if (!isUnlocked) return;
+    listCategories()
+      .then((data) => setCategories(data.categories))
+      .catch(() => {
+        // Non-fatal — category filter chips just fall back to whatever scenarios carry.
+      });
+  }, [isUnlocked]);
+
+  React.useEffect(() => {
+    if (!isUnlocked) return;
     getScenarios()
-      .then((data) => setLiveScenarios(data.scenarios.map(toExploreScenario)))
+      .then((data) => setLiveScenarios(data.scenarios.map((s) => toExploreScenario(s, categories))))
       .catch(() => {
         // Non-fatal — the static cards above (Interview Coach, etc.) still render.
       });
-  }, [isUnlocked]);
+  }, [isUnlocked, categories]);
+
+  const categoryNames = React.useMemo(() => {
+    const names = new Set(categories.map((c) => c.name));
+    [...EXPLORE_STATIC_SCENARIOS, ...liveScenarios].forEach((s) => names.add(s.category));
+    return Array.from(names);
+  }, [categories, liveScenarios]);
 
   // Keep 1st appearance of each scenario.
   const seen = new Set();
@@ -82,7 +90,7 @@ export default function ExplorePage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-serif text-h1 font-semibold text-foreground">
           Select Your Scenario
         </h1>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
@@ -218,7 +226,7 @@ export default function ExplorePage() {
           />
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          {(["All", ...EXPLORE_CATEGORIES] as const).map((c) => (
+          {["All", ...categoryNames].map((c) => (
             <button
               key={c}
               type="button"

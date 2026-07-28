@@ -219,7 +219,7 @@ export default function PublicSpeakingSessionPage() {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div>
-          <h1 className="font-serif text-2xl font-semibold text-foreground">
+          <h1 className="font-serif text-h2 font-semibold text-foreground">
             {config.label}
           </h1>
           <p className="text-sm text-muted-foreground">{config.description}</p>

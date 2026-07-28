@@ -2,6 +2,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from schemas.limits import MAX_SHORT_TEXT_CHARS, MAX_SUBMISSION_CHARS
+
 
 class AudioFeaturesSchema(BaseModel):
     """Audio-derived signal from the Livekit + SileroVAD + faster-whisper agent.
@@ -29,10 +31,10 @@ class StartCoachingSchema(BaseModel):
 
 
 class SubmitCoachingSchema(BaseModel):
-    submission: Optional[str] = None            # typed text OR final transcript
-    subject: Optional[str] = None               # email subject line
+    submission: Optional[str] = Field(None, max_length=MAX_SUBMISSION_CHARS)  # typed text OR final transcript
+    subject: Optional[str] = Field(None, max_length=MAX_SHORT_TEXT_CHARS)     # email subject line
     audio_features: Optional[AudioFeaturesSchema] = None
 
 
 class RoleplayTurnSchema(BaseModel):
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=MAX_SUBMISSION_CHARS)

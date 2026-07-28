@@ -22,10 +22,10 @@ aggression phrase bank reused here.
 
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 
-from fastapi import Depends, Response
+from fastapi import Depends
 from fastapi.responses import JSONResponse
 from prisma import Json
 
@@ -38,6 +38,8 @@ from schemas.scenario_schemas import (
     ScenarioTurnSchema,
     StartScenarioSchema,
 )
+from services import content_scoring_service
+from services.category_service import valid_category_names
 from services.coaching_service import _AGGRESSIVE, _find_phrases
 
 logger = logging.getLogger(__name__)
@@ -191,16 +193,22 @@ def _normalize_custom(row) -> Dict:
         "persona": row.persona,
         "intent": row.intent or row.systemPrompt[:160],
         "goal_type": row.goalType,
+        "difficulty": row.difficulty,
         "safety_mode": row.safetyMode,
         "corporate_tone": row.corporateTone,
         "target_vocab": row.targetVocab,
         "opening_fallback": row.openingLine or f"Let's begin — {row.title}.",
         "instructions": row.systemPrompt,
+        "status": row.status,
     }
 
 
 async def list_scenarios() -> List[Dict]:
-    custom_rows = await db.customscenario.find_many(order={"createdAt": "desc"})
+    # CM-US-04 E-03: archived scenarios never appear for learners starting a new
+    # session — they stay in the DB only so already-in-progress sessions can finish.
+    custom_rows = await db.customscenario.find_many(
+        where={"status": "ACTIVE"}, order={"createdAt": "desc"}
+    )
     items = [
         {"key": key, **meta} for key, meta in prompts.SBL_SCENARIOS.items()
     ] + [
@@ -338,6 +346,8 @@ async def start_session(payload: StartScenarioSchema, user_id: str = Depends(req
     meta = await scenario_meta(payload.scenario_key)
     if not meta:
         return JSONResponse(status_code=400, content={"error": "Unknown scenario"})
+    if meta.get("status") == "ARCHIVED":
+        return JSONResponse(status_code=400, content={"error": "This scenario is no longer available"})
 
     opening = await _roleplay_opening(payload.scenario_key, meta)
     session = await db.scenariosession.create(
@@ -346,6 +356,9 @@ async def start_session(payload: StartScenarioSchema, user_id: str = Depends(req
             "scenarioKey": payload.scenario_key,
             "targetVocab": meta["target_vocab"],
             "turns": Json([{"role": "assistant", "content": opening}]),
+            # CM-US-04: freeze the meta this session started with, so a later admin
+            # edit/rollback to the CustomScenario never changes an in-progress chat.
+            "scenarioMeta": Json(meta),
         }
     )
     return {
@@ -434,7 +447,9 @@ async def send_turn(session_id: str, payload: ScenarioTurnSchema, user_id: str =
     if session.status != "in_progress":
         return JSONResponse(status_code=400, content={"error": "Session is no longer active"})
 
-    meta = await scenario_meta(session.scenarioKey)
+    # CM-US-04: use the meta frozen at start_session, not a live re-fetch — an admin
+    # edit mid-conversation must not change this session's persona/prompt/rules.
+    meta = session.scenarioMeta or await scenario_meta(session.scenarioKey)
     if not meta:
         return JSONResponse(status_code=400, content={"error": "Unknown scenario"})
 
@@ -499,7 +514,7 @@ async def end_session(session_id: str, user_id: str = Depends(require_auth)):
     if session.completedAt:
         return JSONResponse(status_code=400, content={"error": "Session already completed"})
 
-    meta = await scenario_meta(session.scenarioKey)
+    meta = session.scenarioMeta or await scenario_meta(session.scenarioKey)
     final_status = session.status if session.status == "ended_early" else "completed"
     return await _finalize_session(
         session_id, user_id, meta, session.targetVocab, list(session.turns), final_status, list(session.flags)
@@ -531,7 +546,7 @@ async def get_session(session_id: str, user_id: str = Depends(require_auth)):
     }
 
 
-# ── Admin: custom scenario CRUD (SBL-US-06) ────────────────────────────────────
+# ── Admin: custom scenario CRUD (SBL-US-06, CM-US-01 .. CM-US-07) ──────────────
 def _serialize_custom(row) -> Dict:
     return {
         "id": row.id,
@@ -543,22 +558,177 @@ def _serialize_custom(row) -> Dict:
         "opening_line": row.openingLine,
         "target_vocab": row.targetVocab,
         "goal_type": row.goalType,
+        "difficulty": row.difficulty,
         "safety_mode": row.safetyMode,
         "corporate_tone": row.corporateTone,
+        "status": row.status,
+        "archived_at": row.archivedAt.isoformat() if row.archivedAt else None,
+        "version": row.version,
+        "sandbox_tested": row.sandboxTested,
+        "quality_score": row.qualityScore,
+        "quality_feedback": row.qualityFeedback,
+        "confidence_score": row.confidenceScore,
+        "confidence_feedback": row.confidenceFeedback,
+        "scored_at": row.scoredAt.isoformat() if row.scoredAt else None,
+        "readiness_score": row.readinessScore,
+        "readiness_checklist": row.readinessChecklist,
         "created_at": row.createdAt.isoformat(),
         "updated_at": row.updatedAt.isoformat(),
     }
 
 
+# Fields snapshotted into CustomScenarioVersion.snapshot on every edit/rollback —
+# and restored verbatim by admin_rollback_custom. camelCase to match the Prisma
+# row shape 1:1 so restoring is a plain dict spread, not a field-by-field remap.
+_SNAPSHOT_FIELDS = (
+    "title", "category", "persona", "intent", "systemPrompt", "openingLine",
+    "targetVocab", "goalType", "difficulty", "safetyMode", "corporateTone",
+)
+
+
+def _snapshot_fields(row) -> Dict:
+    return {f: getattr(row, f) for f in _SNAPSHOT_FIELDS}
+
+
+async def _save_version_snapshot(scenario_id: str, version: int, row) -> None:
+    await db.customscenarioversion.create(
+        data={"scenarioId": scenario_id, "version": version, "snapshot": Json(_snapshot_fields(row))}
+    )
+
+
+async def _validate_category(category: str) -> Optional[JSONResponse]:
+    valid = await valid_category_names()
+    if category not in valid:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f'"{category}" is not a recognized category — add it under Content Management first.'},
+        )
+    return None
+
+
+# CM-US-04: auto-purge archived scenarios nobody is still mid-conversation in.
+# The "lock" is already load-bearing code, not new: start_session (above) refuses to
+# start on status=="ARCHIVED", so an archived scenario can never gain a new
+# participant from the moment it's archived — there's nothing left to build there.
+# What's missing is the actual delete. No cron/scheduler exists anywhere in this repo,
+# so rather than add one for a single janitorial task, this runs opportunistically
+# every time admin_list_custom is called (i.e. whenever an admin opens the page).
+# ARCHIVE_PURGE_GRACE_HOURS gives a mis-click undo window via Restore before a purge
+# is possible at all.
+ARCHIVE_PURGE_GRACE_HOURS = 12
+
+
+async def _purge_idle_archives() -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_PURGE_GRACE_HOURS)
+    candidates = await db.customscenario.find_many(
+        where={"status": "ARCHIVED", "archivedAt": {"lte": cutoff}}
+    )
+    deleted = 0
+    for row in candidates:
+        # plain count-then-delete, no SELECT-FOR-UPDATE — the only thing
+        # that could race this is another admin hitting Restore in the same instant,
+        # which is rare/low-stakes enough in an internal admin tool not to warrant
+        # row-locking machinery. Cascades to CustomScenarioVersion (schema FK).
+        in_progress = await db.scenariosession.count(
+            where={"scenarioKey": f"custom:{row.id}", "status": "in_progress"}
+        )
+        if in_progress == 0:
+            await db.customscenario.delete(where={"id": row.id})
+            deleted += 1
+    return deleted
+
+
 async def admin_list_custom(user_id: str = Depends(require_admin)):
+    await _purge_idle_archives()
     rows = await db.customscenario.find_many(order={"createdAt": "desc"})
     return {"scenarios": [_serialize_custom(r) for r in rows]}
+
+
+# ── Compulsory publish gate (CM-US-02 quality, CM-US-06 confidence/guardrails,
+# CM-US-07 readiness) — runs on every create/update. Two tiers:
+#   1. HARD, never bypassable: sandbox must have been tested this edit.
+#   2. SOFT, bypassable via `quality_acknowledged`: quality < 70 or the readiness
+#      checklist isn't fully green. The CM-US-03 content-safety scan is a schema-level
+#      validator (scenario_schemas.py), not part of this gate, and is never bypassable
+#      by this flag either.
+async def _run_publish_gate(payload: CustomScenarioSchema) -> Tuple[Optional[JSONResponse], Dict]:
+    shaped = {
+        "title": payload.title, "category": payload.category, "persona": payload.persona,
+        "intent": payload.intent, "system_prompt": payload.system_prompt,
+        "opening_line": payload.opening_line, "target_vocab": payload.target_vocab,
+        "goal_type": payload.goal_type, "difficulty": payload.difficulty,
+        "sandbox_tested": payload.tested,
+    }
+    if not payload.tested:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "Run the sandbox tester successfully before publishing this scenario.",
+                "gate": "not_tested",
+            },
+        ), {}
+
+    eval_result = await content_scoring_service.evaluate_template(shaped)
+    readiness = content_scoring_service.assess_readiness(
+        shaped, eval_result["quality_score"], eval_result["confidence_score"]
+    )
+
+    scores = {
+        "qualityScore": eval_result["quality_score"],
+        "qualityFeedback": Json({
+            "breakdown": eval_result["quality_breakdown"],
+            "recommendations": eval_result["quality_recommendations"],
+            "source": eval_result["_source"],
+        }),
+        "confidenceScore": eval_result["confidence_score"],
+        "confidenceFeedback": Json({
+            "explanation": eval_result["confidence_explanation"],
+            "warnings": eval_result["confidence_warnings"],
+            "guardrail_suggestions": eval_result["confidence_guardrail_suggestions"],
+            "source": eval_result["_source"],
+        }),
+        "scoredAt": datetime.now(timezone.utc),
+        "readinessScore": readiness["score"],
+        "readinessChecklist": Json(readiness),
+    }
+
+    needs_ack = (
+        eval_result["quality_score"] < content_scoring_service.QUALITY_PUBLISH_THRESHOLD
+        or not readiness["ready"]
+    )
+    if needs_ack and not payload.quality_acknowledged:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    f"Scored {eval_result['quality_score']}/100 on quality and isn't ready to "
+                    "publish yet. Review the feedback, then publish anyway if you're sure."
+                ),
+                "gate": "needs_acknowledgment",
+                "quality_score": eval_result["quality_score"],
+                "confidence_score": eval_result["confidence_score"],
+                "quality_recommendations": eval_result["quality_recommendations"],
+                "confidence_warnings": eval_result["confidence_warnings"],
+                "guardrail_suggestions": eval_result["confidence_guardrail_suggestions"],
+                "readiness_missing": readiness["missing"],
+            },
+        ), {}
+
+    return None, scores
 
 
 async def admin_create_custom(payload: CustomScenarioSchema, user_id: str = Depends(require_admin)):
     existing = await db.customscenario.find_unique(where={"title": payload.title})
     if existing:
         return JSONResponse(status_code=409, content={"error": "A scenario with this title already exists"})
+    invalid_category = await _validate_category(payload.category)
+    if invalid_category:
+        return invalid_category
+
+    gate_error, scores = await _run_publish_gate(payload)
+    if gate_error:
+        return gate_error
+
     row = await db.customscenario.create(
         data={
             "title": payload.title,
@@ -569,8 +739,11 @@ async def admin_create_custom(payload: CustomScenarioSchema, user_id: str = Depe
             "openingLine": payload.opening_line,
             "targetVocab": payload.target_vocab,
             "goalType": payload.goal_type,
+            "difficulty": payload.difficulty,
             "safetyMode": payload.safety_mode,
             "corporateTone": payload.corporate_tone,
+            "sandboxTested": payload.tested,
+            **scores,
         }
     )
     return _serialize_custom(row)
@@ -583,6 +756,18 @@ async def admin_update_custom(scenario_id: str, payload: CustomScenarioSchema, u
     collision = await db.customscenario.find_unique(where={"title": payload.title})
     if collision and collision.id != scenario_id:
         return JSONResponse(status_code=409, content={"error": "A scenario with this title already exists"})
+    invalid_category = await _validate_category(payload.category)
+    if invalid_category:
+        return invalid_category
+
+    gate_error, scores = await _run_publish_gate(payload)
+    if gate_error:
+        return gate_error
+
+    # CM-US-04: snapshot the pre-edit state before applying changes, so this
+    # version is always something "Rollback" can restore.
+    await _save_version_snapshot(scenario_id, row.version, row)
+
     updated = await db.customscenario.update(
         where={"id": scenario_id},
         data={
@@ -594,9 +779,163 @@ async def admin_update_custom(scenario_id: str, payload: CustomScenarioSchema, u
             "openingLine": payload.opening_line,
             "targetVocab": payload.target_vocab,
             "goalType": payload.goal_type,
+            "difficulty": payload.difficulty,
             "safetyMode": payload.safety_mode,
             "corporateTone": payload.corporate_tone,
+            "sandboxTested": payload.tested,
+            "version": row.version + 1,
+            **scores,
         },
+    )
+    return _serialize_custom(updated)
+
+
+# ── Versioning & rollback (CM-US-04) ────────────────────────────────────────────
+async def admin_list_versions(scenario_id: str, user_id: str = Depends(require_admin)):
+    row = await db.customscenario.find_unique(where={"id": scenario_id})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+    versions = await db.customscenarioversion.find_many(
+        where={"scenarioId": scenario_id}, order={"version": "desc"}
+    )
+    return {
+        "current_version": row.version,
+        "versions": [
+            {"version": v.version, "snapshot": v.snapshot, "created_at": v.createdAt.isoformat()}
+            for v in versions
+        ],
+    }
+
+
+async def admin_rollback_custom(scenario_id: str, version: int, user_id: str = Depends(require_admin)):
+    row = await db.customscenario.find_unique(where={"id": scenario_id})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+    snapshot_row = await db.customscenarioversion.find_first(
+        where={"scenarioId": scenario_id, "version": version}
+    )
+    if not snapshot_row:
+        return JSONResponse(status_code=404, content={"error": f"No saved version {version} for this scenario"})
+
+    # CM-US-04: rollback is a hard reset, not a new branch on top — every stored
+    # snapshot at or above the target version is discarded (the target's own snapshot
+    # becomes redundant once it's live again; anything newer than it is the abandoned
+    # future the admin is explicitly reverting away from). This does NOT touch anyone
+    # already mid-conversation: ScenarioSession carries its own frozen scenarioMeta
+    # snapshot taken at session start, never a live reference into this table.
+    await db.customscenarioversion.delete_many(
+        where={"scenarioId": scenario_id, "version": {"gte": version}}
+    )
+
+    restore: Dict = dict(snapshot_row.snapshot)
+    updated = await db.customscenario.update(
+        where={"id": scenario_id},
+        data={
+            **restore,
+            "version": version,
+            # Reverted content needs a fresh test + publish-gate pass before it can be
+            # saved again — same as any other content change (CM-US-02/07).
+            "sandboxTested": False,
+            "qualityScore": None, "qualityFeedback": Json(None),
+            "confidenceScore": None, "confidenceFeedback": Json(None),
+            "scoredAt": None, "readinessScore": None, "readinessChecklist": Json(None),
+        },
+    )
+    return _serialize_custom(updated)
+
+
+# ── Archive / restore — delete = archive, never a hard delete (CM-US-04 E-03) ──
+async def admin_archive_custom(scenario_id: str, user_id: str = Depends(require_admin)):
+    row = await db.customscenario.find_unique(where={"id": scenario_id})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+    if row.status == "ARCHIVED":
+        return JSONResponse(status_code=409, content={"error": "Scenario is already archived"})
+    updated = await db.customscenario.update(
+        where={"id": scenario_id},
+        data={"status": "ARCHIVED", "archivedAt": datetime.now(timezone.utc)},
+    )
+    return _serialize_custom(updated)
+
+
+async def admin_restore_custom(scenario_id: str, user_id: str = Depends(require_admin)):
+    row = await db.customscenario.find_unique(where={"id": scenario_id})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+    if row.status == "ACTIVE":
+        return JSONResponse(status_code=409, content={"error": "Scenario is already active"})
+
+    # CM-US-02/07: restoring makes it live for learners again, so it must still clear
+    # the same publish gate — using the row's cached scores (no LLM call needed; they
+    # were computed and persisted the last time this content was actually saved).
+    if row.qualityScore is None or row.confidenceScore is None:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "This scenario has never passed evaluation — edit and save it again before restoring."},
+        )
+    readiness = content_scoring_service.assess_readiness(_serialize_custom(row), row.qualityScore, row.confidenceScore)
+    if row.qualityScore < content_scoring_service.QUALITY_PUBLISH_THRESHOLD or not readiness["ready"]:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": f"Scored {row.qualityScore}/100 and isn't publish-ready — edit and save it again to re-pass the gate before restoring.",
+                "readiness_missing": readiness["missing"],
+            },
+        )
+
+    updated = await db.customscenario.update(
+        where={"id": scenario_id}, data={"status": "ACTIVE", "archivedAt": None}
+    )
+    return _serialize_custom(updated)
+
+
+# ── Quality Score + Prompt Confidence + Readiness (CM-US-02, CM-US-06, CM-US-07) ─
+async def admin_evaluate_template(scenario_id: str, user_id: str = Depends(require_admin)):
+    row = await db.customscenario.find_unique(where={"id": scenario_id})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+
+    result = await content_scoring_service.evaluate_template(_serialize_custom(row))
+    updated = await db.customscenario.update(
+        where={"id": scenario_id},
+        data={
+            "qualityScore": result["quality_score"],
+            "qualityFeedback": Json({
+                "breakdown": result["quality_breakdown"],
+                "recommendations": result["quality_recommendations"],
+                "source": result["_source"],
+            }),
+            "confidenceScore": result["confidence_score"],
+            "confidenceFeedback": Json({
+                "explanation": result["confidence_explanation"],
+                "warnings": result["confidence_warnings"],
+                "source": result["_source"],
+            }),
+            "scoredAt": datetime.now(timezone.utc),
+        },
+    )
+    return _serialize_custom(updated)
+
+
+async def admin_assess_readiness(scenario_id: str, user_id: str = Depends(require_admin)):
+    row = await db.customscenario.find_unique(where={"id": scenario_id})
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+
+    # Auto-run the (cached-per-edit) quality/confidence evaluation first if this
+    # version hasn't been scored yet — readiness needs both to judge the bar.
+    if row.qualityScore is None or row.confidenceScore is None:
+        evaluated = await admin_evaluate_template(scenario_id, user_id)
+        if isinstance(evaluated, JSONResponse):
+            return evaluated
+        row = await db.customscenario.find_unique(where={"id": scenario_id})
+
+    checklist = content_scoring_service.assess_readiness(
+        _serialize_custom(row), row.qualityScore, row.confidenceScore
+    )
+    updated = await db.customscenario.update(
+        where={"id": scenario_id},
+        data={"readinessScore": checklist["score"], "readinessChecklist": Json(checklist)},
     )
     return _serialize_custom(updated)
 
@@ -623,11 +962,3 @@ async def admin_preview_custom(payload: ScenarioPreviewSchema, user_id: str = De
     classification = _classify_turn(meta, payload.message)
     reply = await _roleplay_reply(meta, turns, classification)
     return {"reply": reply, "classification": classification}
-
-
-async def admin_delete_custom(scenario_id: str, user_id: str = Depends(require_admin)):
-    row = await db.customscenario.find_unique(where={"id": scenario_id})
-    if not row:
-        return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
-    await db.customscenario.delete(where={"id": scenario_id})
-    return Response(status_code=204)

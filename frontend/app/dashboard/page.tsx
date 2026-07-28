@@ -88,7 +88,7 @@ export default function DashboardPage() {
       <AccentStalenessBanner />
       <div className="flex animate-fade-up flex-col justify-between gap-4 sm:flex-row sm:items-start">
         <div>
-          <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+          <h1 className="font-serif text-h1 font-semibold text-foreground">
             Hi, {firstName}!
           </h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">{subtitle}</p>

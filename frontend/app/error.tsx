@@ -25,7 +25,7 @@ export default function GlobalErrorBoundary({
         <TriangleAlert className="h-6 w-6" aria-hidden="true" />
       </span>
       <div className="flex flex-col gap-1">
-        <h1 className="font-serif text-2xl font-semibold text-foreground">
+        <h1 className="font-serif text-h2 font-semibold text-foreground">
           Something went wrong
         </h1>
         <p className="max-w-sm text-sm text-muted-foreground">

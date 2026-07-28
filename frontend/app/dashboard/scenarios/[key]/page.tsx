@@ -275,7 +275,7 @@ export default function ScenarioSessionPage() {
       <div className="mx-auto flex max-w-2xl flex-col gap-6">
         {gate}
         <div>
-          <h1 className="font-serif text-2xl font-semibold text-foreground">
+          <h1 className="font-serif text-h2 font-semibold text-foreground">
             {detail.label}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -328,7 +328,7 @@ export default function ScenarioSessionPage() {
           onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
         />
         <div className="flex items-center justify-between">
-          <h1 className="font-serif text-2xl font-semibold text-foreground">
+          <h1 className="font-serif text-h2 font-semibold text-foreground">
             {step.session.label}
           </h1>
           <div className="flex items-center gap-2">
@@ -454,7 +454,7 @@ export default function ScenarioSessionPage() {
       {gate}
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
-        <h1 className="mt-3 font-serif text-2xl font-semibold">
+        <h1 className="mt-3 font-serif text-h2 font-semibold">
           {Math.round(result.scores.politeness ?? 0)}/100 Politeness
         </h1>
         <p className="mt-2 text-sm text-primary-foreground/85">

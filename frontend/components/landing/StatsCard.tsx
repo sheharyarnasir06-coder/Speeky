@@ -32,7 +32,7 @@ export function StatsCard({ stat }: StatsCardProps) {
         ) : null}
       </div>
       <div className="flex flex-col gap-1">
-        <span className="text-2xl font-semibold tracking-tight text-foreground">
+        <span className="text-h2 font-semibold tracking-tight text-foreground">
           {value}
         </span>
         <span className="text-sm text-muted-foreground">{label}</span>

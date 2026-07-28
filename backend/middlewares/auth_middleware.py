@@ -42,10 +42,22 @@ async def require_auth(request: Request, response: Response) -> str:
 
 
 async def require_admin(user_id: str = Depends(require_auth)) -> str:
-    """Admin-only dependency — use as `user_id: str = Depends(require_admin)`.
-    Checks role from DB (not the JWT) so a role downgrade takes effect immediately
-    instead of waiting for the access token to expire."""
+    """Admin-OR-Super-Admin dependency — use as `user_id: str = Depends(require_admin)`.
+    Gates the shared Admin gateway (content management, custom scenarios): a Super
+    Admin can do everything a regular Admin can, so both roles pass here. Checks role
+    from DB (not the JWT) so a role downgrade takes effect immediately instead of
+    waiting for the access token to expire."""
     user = await db.user.find_unique(where={"id": user_id})
-    if not user or user.role != "ADMIN":
+    if not user or user.role not in ("ADMIN", "SUPER_ADMIN"):
         raise AuthError("Admin access required", 403)
+    return user_id
+
+
+async def require_super_admin(user_id: str = Depends(require_auth)) -> str:
+    """Super-Admin-only dependency — gates the exclusively-Super-Admin surface
+    (user management: viewing all accounts, promoting/revoking, ownership transfer).
+    Regular Admins are deliberately excluded here."""
+    user = await db.user.find_unique(where={"id": user_id})
+    if not user or user.role != "SUPER_ADMIN":
+        raise AuthError("Super Admin access required", 403)
     return user_id

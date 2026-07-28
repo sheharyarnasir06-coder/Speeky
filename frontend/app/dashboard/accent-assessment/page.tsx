@@ -205,7 +205,7 @@ export default function AccentAssessmentPage() {
     return (
       <div className="mx-auto flex max-w-lg flex-col items-center gap-5 rounded-2xl border border-danger/30 bg-danger/10 p-8 text-center shadow-sm">
         <ShieldAlert className="h-12 w-12 text-danger" />
-        <h1 className="font-serif text-2xl font-semibold text-foreground">
+        <h1 className="font-serif text-h2 font-semibold text-foreground">
           Assessment Access Suspended
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -233,7 +233,7 @@ export default function AccentAssessmentPage() {
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
       {gate}
       <div className="flex flex-col gap-1">
-        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-serif text-h1 font-semibold text-foreground">
           Accent Assessment
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -275,17 +275,29 @@ export default function AccentAssessmentPage() {
             <button
               onClick={isRecording ? handleStopRecording : () => void runWithVoiceReadiness(handleStartRecording)}
               disabled={isSubmitting}
+              // Icon-only control: without an explicit name a screen reader announces
+              // only "button". aria-pressed exposes the record/stop state too, so the
+              // control is usable without seeing the colour change.
+              aria-label={
+                isSubmitting
+                  ? "Analysing your recording"
+                  : isRecording
+                    ? "Stop recording"
+                    : "Start recording the passage"
+              }
+              aria-pressed={isRecording}
               className={cn(
-                "flex h-20 w-20 items-center justify-center rounded-full transition-all shadow-md",
+                "flex h-20 w-20 items-center justify-center rounded-full shadow-md",
+                "transition-transform duration-fast ease-spring motion-reduce:transition-none",
                 isRecording
-                  ? "bg-danger text-white animate-pulse"
-                  : "bg-primary text-primary-foreground hover:scale-105"
+                  ? "bg-danger text-white animate-pulse motion-reduce:animate-none"
+                  : "bg-primary text-primary-foreground hover:scale-105 motion-reduce:hover:scale-100"
               )}
             >
               {isSubmitting ? (
-                <Loader2 className="h-8 w-8 animate-spin" />
+                <Loader2 className="h-8 w-8 animate-spin" aria-hidden="true" />
               ) : (
-                <Mic className="h-8 w-8" />
+                <Mic className="h-8 w-8" aria-hidden="true" />
               )}
             </button>
             <p className="text-sm text-muted-foreground">
