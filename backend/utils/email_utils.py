@@ -199,7 +199,7 @@ async def send_otp_email(to: str, code: str) -> None:
         ),
     )
 
-    if os.environ.get("NODE_ENV") != "production":
+    if os.environ.get("APP_ENV") != "production":
         print(f"[DEV] OTP code for {to}: {code}")
 
 
@@ -227,7 +227,7 @@ async def send_email_change_otp(to: str, code: str) -> None:
         ),
     )
 
-    if os.environ.get("NODE_ENV") != "production":
+    if os.environ.get("APP_ENV") != "production":
         print(f"[DEV] Email-change OTP code for {to}: {code}")
 
 
@@ -261,5 +261,5 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
         ),
     )
 
-    if os.environ.get("NODE_ENV") != "production":
+    if os.environ.get("APP_ENV") != "production":
         print(f"[DEV] Reset URL: {reset_url}")

@@ -1,110 +1,36 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, Mic, ShieldCheck, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ShieldCheck } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { ApiError } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   CONSENT_CATEGORIES,
-  getConsentHistory,
   getConsentPreferences,
   setConsent,
-  type ConsentHistoryEntry,
   type ConsentPreferences,
 } from "@/lib/consent";
-import {
-  deleteStoredVoiceSamples,
-  getVoiceConsent,
-  updateVoiceConsent,
-  type VoiceConsentStatus,
-} from "@/lib/voiceConsent";
 
-/** US-06 + ACC-US-02: Privacy & Consent controls, including voice data consent. */
+/** US-06 : Privacy & Consent controls. */
 export function PrivacyConsentSection() {
   const { user } = useAuth();
-  const [preferences, setPreferences] = React.useState<ConsentPreferences | null>(null);
-  const [history, setHistory] = React.useState<ConsentHistoryEntry[]>([]);
-  const [historyOpen, setHistoryOpen] = React.useState(false);
-  const [voiceConsent, setVoiceConsent] = React.useState<VoiceConsentStatus | null>(null);
-  const [voiceMessage, setVoiceMessage] = React.useState<string | null>(null);
-  const [voiceError, setVoiceError] = React.useState<string | null>(null);
-  const [isUpdatingVoiceConsent, setIsUpdatingVoiceConsent] = React.useState(false);
-  const [isDeletingVoiceSamples, setIsDeletingVoiceSamples] = React.useState(false);
+  const [preferences, setPreferences] =
+    React.useState<ConsentPreferences | null>(null);
 
   React.useEffect(() => {
     if (!user) return;
 
     setPreferences(getConsentPreferences(user.id));
-    setHistory(getConsentHistory(user.id));
-    setVoiceMessage(null);
-    setVoiceError(null);
-
-    getVoiceConsent()
-      .then(setVoiceConsent)
-      .catch((err) => {
-        setVoiceConsent(null);
-        setVoiceError(
-          err instanceof ApiError
-            ? err.message
-            : "Could not load voice consent settings."
-        );
-      });
   }, [user]);
 
   if (!user || !preferences) return null;
 
-  function handleToggle(category: (typeof CONSENT_CATEGORIES)[number]["id"], granted: boolean) {
+  function handleToggle(
+    category: (typeof CONSENT_CATEGORIES)[number]["id"],
+    granted: boolean,
+  ) {
     const result = setConsent(user!.id, category, granted);
     setPreferences(result.preferences);
-    setHistory(result.history);
-  }
-
-  async function handleVoiceConsentToggle(granted: boolean) {
-    setVoiceMessage(null);
-    setVoiceError(null);
-    setIsUpdatingVoiceConsent(true);
-
-    try {
-      const updated = await updateVoiceConsent(granted);
-      setVoiceConsent(updated);
-      setVoiceMessage(
-        granted
-          ? "Voice Accent Assessment is enabled."
-          : "Voice Accent Assessment is paused and any retained raw audio has been purged."
-      );
-    } catch (err) {
-      setVoiceError(
-        err instanceof ApiError
-          ? err.message
-          : "Could not update voice consent."
-      );
-    } finally {
-      setIsUpdatingVoiceConsent(false);
-    }
-  }
-
-  async function handleDeleteVoiceSamples() {
-    setVoiceMessage(null);
-    setVoiceError(null);
-    setIsDeletingVoiceSamples(true);
-
-    try {
-      const result = await deleteStoredVoiceSamples();
-      const updated = await getVoiceConsent();
-      setVoiceConsent(updated);
-      setVoiceMessage(result.message);
-    } catch (err) {
-      setVoiceError(
-        err instanceof ApiError
-          ? err.message
-          : "Could not delete voice samples."
-      );
-    } finally {
-      setIsDeletingVoiceSamples(false);
-    }
   }
 
   return (
@@ -114,7 +40,9 @@ export function PrivacyConsentSection() {
           <ShieldCheck className="h-4 w-4" aria-hidden="true" />
         </span>
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Privacy &amp; Consent</h2>
+          <h2 className="text-sm font-semibold text-foreground">
+            Privacy &amp; Consent
+          </h2>
           <p className="text-sm text-muted-foreground">
             Manage how your data is used. Changes are recorded to a viewable
             history below.
@@ -125,19 +53,34 @@ export function PrivacyConsentSection() {
       <div className="mt-4 flex flex-col divide-y divide-border border-t border-border">
         <div className="flex items-center justify-between py-3">
           <div>
-            <p className="text-sm font-medium text-foreground">Essential Account Data</p>
+            <p className="text-sm font-medium text-foreground">
+              Essential Account Data
+            </p>
             <p className="text-xs text-muted-foreground">
               Required to operate your account — can&apos;t be turned off.
             </p>
           </div>
-          <Switch checked disabled onCheckedChange={() => {}} label="Essential Account Data" hideLabel />
+          <Switch
+            checked
+            disabled
+            onCheckedChange={() => {}}
+            label="Essential Account Data"
+            hideLabel
+          />
         </div>
 
         {CONSENT_CATEGORIES.map((category) => (
-          <div key={category.id} className="flex items-center justify-between py-3">
+          <div
+            key={category.id}
+            className="flex items-center justify-between py-3"
+          >
             <div>
-              <p className="text-sm font-medium text-foreground">{category.label}</p>
-              <p className="text-xs text-muted-foreground">{category.description}</p>
+              <p className="text-sm font-medium text-foreground">
+                {category.label}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {category.description}
+              </p>
             </div>
             <Switch
               checked={preferences[category.id]}
@@ -148,92 +91,6 @@ export function PrivacyConsentSection() {
           </div>
         ))}
       </div>
-
-      <div className="mt-4 rounded-xl border border-border bg-surface p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-              <Mic className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <div>
-              <p className="text-sm font-medium text-foreground">Voice Accent Assessment</p>
-              <p className="text-xs text-muted-foreground">
-                Controls microphone-based accent scoring. Derived text scores stay even if
-                voice samples are deleted.
-              </p>
-            </div>
-          </div>
-
-          <Switch
-            checked={voiceConsent?.granted ?? false}
-            disabled={!voiceConsent || isUpdatingVoiceConsent}
-            onCheckedChange={handleVoiceConsentToggle}
-            label="Voice Accent Assessment"
-            hideLabel
-          />
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            loading={isDeletingVoiceSamples}
-            disabled={!voiceConsent || isUpdatingVoiceConsent}
-            onClick={handleDeleteVoiceSamples}
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-            Delete Voice Samples
-          </Button>
-
-          <span className="text-xs text-muted-foreground">
-            Raw audio retention: {voiceConsent?.retention_days ?? 0} days
-          </span>
-        </div>
-
-        {voiceConsent?.consented_at ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Consent recorded on {new Date(voiceConsent.consented_at).toLocaleString()}.
-          </p>
-        ) : null}
-
-        {voiceConsent?.withdrawn_at ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Consent withdrawn on {new Date(voiceConsent.withdrawn_at).toLocaleString()}.
-          </p>
-        ) : null}
-
-        {voiceMessage ? <p className="mt-2 text-xs text-success">{voiceMessage}</p> : null}
-        {voiceError ? <p className="mt-2 text-xs text-danger">{voiceError}</p> : null}
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setHistoryOpen((open) => !open)}
-        className="mt-4 flex w-full items-center justify-between text-sm font-medium text-primary"
-      >
-        Consent history
-        <ChevronDown
-          className={cn("h-4 w-4 transition-transform", historyOpen && "rotate-180")}
-          aria-hidden="true"
-        />
-      </button>
-
-      {historyOpen ? (
-        <ul className="mt-3 flex flex-col gap-2">
-          {history.length === 0 ? (
-            <li className="text-xs text-muted-foreground">No changes recorded yet.</li>
-          ) : (
-            history.map((entry, i) => (
-              <li key={i} className="text-xs text-muted-foreground">
-                {new Date(entry.timestamp).toLocaleString()} —{" "}
-                {CONSENT_CATEGORIES.find((c) => c.id === entry.category)?.label ?? entry.category}{" "}
-                {entry.granted ? "enabled" : "disabled"} (policy {entry.policyVersion})
-              </li>
-            ))
-          )}
-        </ul>
-      ) : null}
     </div>
   );
 }

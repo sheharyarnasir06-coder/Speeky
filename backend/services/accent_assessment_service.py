@@ -26,7 +26,6 @@ from lib.recording_engine import RecordingAnalysis, RejectionReason
 from lib.speech_config import SpeechConfig, load_speech_config
 from lib.text_alignment import AlignedWord, WordStatus
 from middlewares.auth_middleware import require_auth
-from services.voice_consent_service import ensure_voice_consent
 from prisma.enums import AccentAssessmentStatus
 from schemas.accent_schemas import (
     AccentAssessmentResultSchema,
@@ -285,7 +284,6 @@ async def submit_passage_assessment(
         raise PassageNotFoundError(f"Unknown passage_id: {passage_id}")
 
     config = load_speech_config()
-    await ensure_voice_consent(user_id)
     audio_bytes = await audio.read()
     max_bytes = config.accent_max_upload_mb * 1024 * 1024
     if len(audio_bytes) > max_bytes:

@@ -30,9 +30,14 @@ router.add_api_route("/passages/{passage_id}/assessments", submit_passage_assess
 router.add_api_route("/appeal", submit_liveness_appeal, methods=["POST"])
 router.add_api_route("/sub-dialect-dispute", handle_sub_dialect_dispute, methods=["POST"])
 
-# Accent Profile & Improvement (US-89)
-router.add_api_route("/profile", get_profile, methods=["GET"])
-router.add_api_route("/profile/exercises", get_exercises, methods=["GET"])
+# Accent Profile & Improvement (US-89) — the per-dimension SCORE profile
+# (pronunciation/stress/rhythm/intonation/clarity) built from a completed assessment.
+# Served under /score-profile, not /profile: /profile belongs to the target-accent
+# management profile (accent_assessment_routes) that the client actually fetches, and
+# two different payload shapes sharing one path meant whichever router registered first
+# silently answered for both.
+router.add_api_route("/score-profile", get_profile, methods=["GET"])
+router.add_api_route("/score-profile/exercises", get_exercises, methods=["GET"])
 
 # ACC-US-12: Accent Progress Tracker Visualization
 router.add_api_route("/progress-tracker", get_accent_progress_tracker, methods=["GET"])

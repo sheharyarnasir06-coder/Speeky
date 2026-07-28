@@ -83,7 +83,7 @@ def reset_expiry_date() -> datetime:
 
 
 def get_access_cookie_options() -> dict:
-    is_prod = os.environ.get("NODE_ENV") == "production"
+    is_prod = os.environ.get("APP_ENV") == "production"
     return dict(
         httponly=True,
         secure=is_prod,
@@ -94,7 +94,7 @@ def get_access_cookie_options() -> dict:
 
 
 def get_refresh_cookie_options() -> dict:
-    is_prod = os.environ.get("NODE_ENV") == "production"
+    is_prod = os.environ.get("APP_ENV") == "production"
     return dict(
         httponly=True,
         secure=is_prod,

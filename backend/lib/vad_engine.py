@@ -20,6 +20,12 @@ from lib.speech_config import SpeechConfig
 
 _model = None
 
+# Sentinels returned by estimate_noise_and_snr when the clip offers nothing to measure
+# against (no speech at all, or no non-speech region). They are "unknown", not "perfect" —
+# treating them as real measurements is what made continuous speech look synthetic.
+UNMEASURED_NOISE_FLOOR_DBFS = -120.0
+UNMEASURED_SNR_DB = 99.0
+
 
 def _get_model():
     global _model
@@ -75,8 +81,12 @@ def detect_speech_segments(waveform: np.ndarray, sample_rate: int, config: Speec
 def estimate_noise_and_snr(waveform: np.ndarray, sample_rate: int, vad_result: VadResult) -> Tuple[float, float]:
     """Return (noise_floor_dbfs, snr_db) from speech-segment level vs. everything else.
 
-    snr_db is a sentinel 99.0 when the clip has no measurable non-speech region (speech
-    covers the entire duration) — there's nothing to compare against, so we assume clean.
+    When the clip has no measurable non-speech region (speech covers the whole duration,
+    e.g. the speaker started immediately and never paused) the sentinels
+    UNMEASURED_NOISE_FLOOR_DBFS / UNMEASURED_SNR_DB are returned. They mean "could not be
+    measured", NOT "pristine studio audio" — callers that judge audio authenticity must
+    skip these values rather than read them as evidence (see
+    recording_engine.detect_playback_audio).
     """
     speech_chunks = [slice_seconds(waveform, sample_rate, s.start_s, s.end_s) for s in vad_result.segments]
     speech = np.concatenate(speech_chunks) if speech_chunks else np.empty(0, dtype=waveform.dtype)
@@ -90,9 +100,9 @@ def estimate_noise_and_snr(waveform: np.ndarray, sample_rate: int, vad_result: V
     noise = waveform[mask]
 
     if not speech.size:
-        return -120.0, 0.0
+        return UNMEASURED_NOISE_FLOOR_DBFS, 0.0
     if not noise.size:
-        return -120.0, 99.0
+        return UNMEASURED_NOISE_FLOOR_DBFS, UNMEASURED_SNR_DB
 
     noise_level = rms_dbfs(noise)
     return noise_level, speech_level - noise_level

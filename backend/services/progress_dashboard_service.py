@@ -92,51 +92,28 @@ async def _flag_outlier_row(prisma_model, row_id: str, flag_field: str, offendin
         logger.warning(f"Failed to persist outlier flag ({flag_field}) on row {row_id}: {e}")
 
 
-def calculate_rolling_streak(records: List[Dict]) -> int:
+async def get_daily_streak_days(user_id: str) -> int:
+    """The learner's Daily Challenge streak — read from the ONE source of truth.
+
+    PDG-US-11 owns streaks (services/daily_challenge_service, kv-backed qualified_dates)
+    and the Daily Challenge card / navbar icon render that number. This dashboard used to
+    derive its own streak from a rolling 24-48h window over session rows, which answered a
+    different question and showed the user a different number for the same word on the
+    same screen. Reading the canonical value keeps the platform consistent.
+
+    Best-effort: a streak lookup failure must never take down the whole dashboard.
     """
-    E-04 Streak Calculation:
-    Calculates practice streak using a rolling 24-48 hour UTC window rather than strict
-    local calendar-day boundaries, so travel / timezone shifts don't break a real streak.
-    """
-    if not records:
+    try:
+        from services import daily_challenge_service
+
+        raw = await daily_challenge_service._get_streak_raw(user_id)
+        _completed_today, alive_streak = daily_challenge_service._streak_view(
+            raw, datetime.now(timezone.utc).date()
+        )
+        return alive_streak
+    except Exception as e:
+        logger.warning(f"Daily streak lookup failed: {e}")
         return 0
-
-    timestamps = [r["completed_at"] for r in records if r.get("completed_at") is not None]
-    if not timestamps:
-        return 0
-
-    timestamps.sort()
-    now = datetime.now(timezone.utc)
-    latest = timestamps[-1]
-
-    if latest.tzinfo is None:
-        latest = latest.replace(tzinfo=timezone.utc)
-
-    # If user hasn't practiced in the last 48 hours, current streak is 0
-    time_since_latest = (now - latest).total_seconds()
-    if time_since_latest > 48 * 3600:
-        return 0
-
-    streak = 1
-    current_anchor = latest
-
-    for t in reversed(timestamps[:-1]):
-        if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
-
-        gap_seconds = (current_anchor - t).total_seconds()
-        # Intra-day sessions (gap <= 4h) count as same activity block
-        if gap_seconds <= 4 * 3600:
-            continue
-        # Consecutive activity within 48h rolling window increments streak
-        elif gap_seconds <= 48 * 3600:
-            streak += 1
-            current_anchor = t
-        else:
-            # Gap > 48h breaks streak
-            break
-
-    return streak
 
 
 async def _fetch_completed_records_from_db(user_id: str) -> Tuple[List[Dict], int]:
@@ -337,6 +314,7 @@ def _build_dashboard_payload(
     is_stale: bool = False,
     sync_message: Optional[str] = None,
     lifetime_practice_seconds: float = 0.0,
+    daily_streak_days: int = 0,
 ) -> Dict:
     """Constructs the complete ProgressDashboardResponseSchema dict."""
     now_str = datetime.now(timezone.utc).isoformat()
@@ -396,7 +374,7 @@ def _build_dashboard_payload(
     total_seconds = lifetime_practice_seconds
     total_minutes = round(total_seconds / 60.0, 1)
     total_hours = round(total_seconds / 3600.0, 2)
-    streak_days = calculate_rolling_streak(records)
+    streak_days = daily_streak_days
 
     primary_metric = PrimaryMetricSchema(
         name="Confidence Score",
@@ -492,6 +470,7 @@ async def get_progress_dashboard(user_id: str = Depends(require_auth)) -> Dict:
             outliers_count,
             vocab_growth,
             lifetime_practice_seconds=(dashboard_user.lifetimePracticeSeconds if dashboard_user else 0.0),
+            daily_streak_days=await get_daily_streak_days(user_id),
         )
 
         # E-01: Save last-known-good snapshot to KV store. create() fails with a

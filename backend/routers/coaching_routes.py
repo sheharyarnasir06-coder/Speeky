@@ -27,7 +27,8 @@ router.add_api_route("/code-switch-words/{word_id}", delete_code_switch_word, me
 router.add_api_route("/{session_id}/turn", roleplay_turn, methods=["POST"])
 router.add_api_route("/{session_id}/voice-token", voice_token, methods=["POST"])
 router.add_api_route("/{session_id}/submit", submit_session, methods=["POST"])
+# US-102 filler-word breakdown for a coaching session. Single canonical path — the
+# duplicate "/sessions/{session_id}/filler-words" alias pointed at this same handler.
 router.add_api_route("/{session_id}/filler-words", get_filler_words_for_session, methods=["GET"])
-router.add_api_route("/sessions/{session_id}/filler-words", get_filler_words_for_session, methods=["GET"])
 router.add_api_route("/{session_id}", get_session, methods=["GET"])
 

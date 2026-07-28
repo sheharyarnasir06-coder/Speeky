@@ -9,12 +9,15 @@ isolation (see tests/test_recording_engine.py) and reusable by any future featur
 needs "record against a target text and get back what was said."
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
 
 from lib import audio_io, prosody_engine, stt_engine, text_alignment, vad_engine
 from lib.speech_config import SpeechConfig
+
+logger = logging.getLogger(__name__)
 
 
 class RejectionReason(str, Enum):
@@ -151,7 +154,7 @@ def classify_word_status(
     """
     if timing is None:
         return text_alignment.WordStatus.SKIPPED
-    if text_alignment.normalize(timing.word) != text_alignment.normalize(target_word):
+    if not text_alignment.is_near_match(target_word, timing.word, config.word_near_match_ratio):
         return text_alignment.WordStatus.MISPRONOUNCED
     if timing.probability < config.word_confidence_threshold:
         return text_alignment.WordStatus.MISPRONOUNCED
@@ -197,25 +200,79 @@ def detect_disfluency(analysis: RecordingAnalysis, config: SpeechConfig) -> bool
     return False
 
 
-def detect_playback_audio(analysis: RecordingAnalysis, config: SpeechConfig) -> Optional[RejectionReason]:
-    """ACC-US-01: Detect pre-recorded or synthetic playback file audio based on signal characteristics.
-    
-    Checks ambient noise floor cutoffs, flat artificial noise floor (< -75.0 dBFS or near zero),
-    excessively high SNR (> 55 dBFS), or zero pitch variance on speech segments.
-    """
-    if analysis.noise_floor_dbfs < config.liveness_min_noise_floor_dbfs:
-        return RejectionReason.PLAYBACK_DETECTED
-    if analysis.snr_db > 55.0 and analysis.duration_seconds > 2.0:
-        return RejectionReason.PLAYBACK_DETECTED
+# A synthetic/played-back clip is rejected only on strong evidence. Each individual
+# signal below is environment-dependent — OS noise suppression, a close-talking headset,
+# a tightly-trimmed clip or a slightly dull mic all push one of them into "suspicious"
+# range for entirely genuine live speech (that is what made this reject real users on
+# some machines and not others). So a single hint never rejects: either the pitch track
+# is physically impossible for a human voice, or at least two independent hints agree.
+_MIN_CORROBORATING_SIGNALS = 2
+
+# Below this, a pitch track is flat to a degree a human larynx does not produce; that is
+# a TTS/looped-tone fingerprint rather than an environmental artefact.
+_SYNTHETIC_PITCH_STD_HZ = 0.5
+_MIN_VOICED_FRAMES_FOR_PITCH_CHECK = 10
+
+
+def _is_measured(value: float, sentinel: float) -> bool:
+    """Sentinels mean 'nothing to measure against', not 'pristine studio capture'."""
+    return value != sentinel
+
+
+def _playback_signals(analysis: RecordingAnalysis, config: SpeechConfig) -> List[str]:
+    """Weak, corroborating hints that a clip may not be live mic capture."""
+    signals: List[str] = []
+
+    if (
+        _is_measured(analysis.noise_floor_dbfs, vad_engine.UNMEASURED_NOISE_FLOOR_DBFS)
+        and analysis.noise_floor_dbfs < config.liveness_min_noise_floor_dbfs
+    ):
+        signals.append("unnaturally_flat_noise_floor")
+
+    if (
+        _is_measured(analysis.snr_db, vad_engine.UNMEASURED_SNR_DB)
+        and analysis.duration_seconds > 2.0
+        and analysis.snr_db > config.liveness_max_snr_db
+    ):
+        signals.append("implausible_snr")
+
     if (
         analysis.duration_seconds > 1.0
         and analysis.high_freq_energy_ratio < config.liveness_min_high_freq_energy_ratio
     ):
+        signals.append("missing_high_frequency_energy")
+
+    return signals
+
+
+def _has_synthetic_pitch_track(analysis: RecordingAnalysis) -> bool:
+    """Near-zero pitch variance across many voiced frames — decisive on its own."""
+    if not analysis.prosody or len(analysis.prosody.pitch_hz) <= _MIN_VOICED_FRAMES_FOR_PITCH_CHECK:
+        return False
+
+    import numpy as np
+
+    voiced = [f for f in analysis.prosody.pitch_hz if f > 0]
+    if len(voiced) <= _MIN_VOICED_FRAMES_FOR_PITCH_CHECK:
+        return False
+    return bool(np.std(voiced) < _SYNTHETIC_PITCH_STD_HZ)
+
+
+def detect_playback_audio(analysis: RecordingAnalysis, config: SpeechConfig) -> Optional[RejectionReason]:
+    """ACC-US-01: reject pre-recorded or synthetic audio, without rejecting real speakers.
+
+    Decisive on a physically implausible (flat) pitch track; otherwise requires at least
+    _MIN_CORROBORATING_SIGNALS independent hints, and ignores any measurement the VAD
+    could not actually take.
+    """
+    if _has_synthetic_pitch_track(analysis):
         return RejectionReason.PLAYBACK_DETECTED
-    if analysis.prosody and len(analysis.prosody.pitch_hz) > 10:
-        import numpy as np
-        voiced = [f for f in analysis.prosody.pitch_hz if f > 0]
-        if len(voiced) > 10 and np.std(voiced) < 0.5:
-            return RejectionReason.PLAYBACK_DETECTED
+
+    signals = _playback_signals(analysis, config)
+    if len(signals) >= _MIN_CORROBORATING_SIGNALS:
+        logger.info("Playback rejection on corroborating signals: %s", signals)
+        return RejectionReason.PLAYBACK_DETECTED
+    if signals:
+        logger.debug("Liveness hint(s) seen but not corroborated, accepting: %s", signals)
     return None
 

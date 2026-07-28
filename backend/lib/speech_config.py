@@ -53,6 +53,7 @@ class SpeechConfig:
 
     # ── Pronunciation Coach (US-95) ───────────────────────────────────────────
     word_confidence_threshold: float
+    word_near_match_ratio: float
     stress_error_sensitivity: float
     disfluency_repetition_window_seconds: float
     pronunciation_retry_limit: int  # 0 = unlimited
@@ -83,6 +84,7 @@ class SpeechConfig:
 
     # ── Live Speech Verification (ACC-US-01) & Local Accent Calibration (ACC-US-11)
     liveness_min_noise_floor_dbfs: float
+    liveness_max_snr_db: float
     liveness_token_ttl_seconds: int
     local_accent_model_available: bool
     liveness_min_high_freq_energy_ratio: float
@@ -110,6 +112,13 @@ def load_speech_config() -> SpeechConfig:
         # near-zero-confidence transcription (effectively noise/garbage), not genuine
         # mispronunciation — recalibrate upward against real samples if that's too loose.
         word_confidence_threshold=_float_env("WORD_CONFIDENCE_THRESHOLD", 0.05),
+        # How close a transcribed word must be to the target before it counts as the
+        # same word. Speech-to-text returns approximate spellings for accented but
+        # intelligible speech; demanding an exact string made the coach require
+        # near-native articulation. Words shorter than
+        # text_alignment.MIN_LENGTH_FOR_NEAR_MATCH still need an exact match so minimal
+        # pairs (ship/sheep, bit/beat) are never waved through.
+        word_near_match_ratio=_float_env("WORD_NEAR_MATCH_RATIO", 0.85),
         stress_error_sensitivity=_float_env("STRESS_ERROR_SENSITIVITY", 0.4),
         disfluency_repetition_window_seconds=_float_env("DISFLUENCY_REPETITION_WINDOW_SECONDS", 2.0),
         pronunciation_retry_limit=_int_env("PRONUNCIATION_RETRY_LIMIT", 0),
@@ -134,7 +143,13 @@ def load_speech_config() -> SpeechConfig:
         exercise_batch_size=_int_env("EXERCISE_BATCH_SIZE", 6),
         pronunciation_tts_slow_length_scale=_float_env("PRONUNCIATION_TTS_SLOW_LENGTH_SCALE", 1.6),
         pronunciation_tts_cache_ttl_seconds=_int_env("PRONUNCIATION_TTS_CACHE_TTL_SECONDS", 604800),
-        liveness_min_noise_floor_dbfs=_float_env("LIVENESS_MIN_NOISE_FLOOR_DBFS", -75.0),
+        # Noise floors this low do occur on real hardware once OS/browser noise
+        # suppression is active, so this is only a corroborating hint (see
+        # recording_engine.detect_playback_audio), never a rejection on its own.
+        liveness_min_noise_floor_dbfs=_float_env("LIVENESS_MIN_NOISE_FLOOR_DBFS", -90.0),
+        # Speech-to-noise above this is implausible for a real room. Also corroborating
+        # only — a close-talking headset in a quiet room legitimately reaches the 50s.
+        liveness_max_snr_db=_float_env("LIVENESS_MAX_SNR_DB", 70.0),
         liveness_token_ttl_seconds=_int_env("LIVENESS_TOKEN_TTL_SECONDS", 900),
         local_accent_model_available=_str_env("LOCAL_ACCENT_MODEL_AVAILABLE", "true").lower() in ("true", "1", "yes"),
         # Fraction of total spectral energy expected in the top 10% of the Nyquist band

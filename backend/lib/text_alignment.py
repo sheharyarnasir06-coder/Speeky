@@ -28,6 +28,45 @@ def normalize(word: str) -> str:
     return re.sub(r"[^a-z']", "", word.lower())
 
 
+# Below this length a one-character difference usually IS a different word — and those
+# short minimal pairs (ship/sheep, bit/beat, cat/cut) are exactly what pronunciation
+# practice is meant to catch, so short words must still match exactly.
+MIN_LENGTH_FOR_NEAR_MATCH = 5
+
+# An affix turns a word into a different one ("comfortable" -> "uncomfortable",
+# "happy" -> "unhappy") while keeping similarity very high, so containment plus this
+# many extra characters is treated as a different word, never a near-miss.
+MIN_AFFIX_LENGTH_DELTA = 2
+
+
+def similarity(target_word: str, spoken_word: str) -> float:
+    """0..1 closeness of two normalized words (difflib, same tool the aligner uses)."""
+    return difflib.SequenceMatcher(None, normalize(target_word), normalize(spoken_word)).ratio()
+
+
+def is_near_match(target_word: str, spoken_word: str, min_ratio: float) -> bool:
+    """True when the transcript word is a near-miss spelling of the target rather than a
+    genuinely different word.
+
+    Speech-to-text routinely returns approximate spellings for accented but perfectly
+    intelligible speech ("comfortable" -> "comftable"). Scoring those as mispronounced
+    made the coach demand near-native articulation before it would credit a word. A
+    similarity floor accepts the near-miss while still rejecting a substituted word —
+    "nice" heard as "beautiful" scores far below any sane floor and stays mispronounced.
+    """
+    target, spoken = normalize(target_word), normalize(spoken_word)
+    if not target or not spoken:
+        return False
+    if target == spoken:
+        return True
+    if len(target) < MIN_LENGTH_FOR_NEAR_MATCH:
+        return False
+    # Affixation (un-, mis-, -ness) reads as highly similar but means something else.
+    if (target in spoken or spoken in target) and abs(len(target) - len(spoken)) >= MIN_AFFIX_LENGTH_DELTA:
+        return False
+    return similarity(target, spoken) >= min_ratio
+
+
 @dataclass
 class AlignedWord:
     target_word: str

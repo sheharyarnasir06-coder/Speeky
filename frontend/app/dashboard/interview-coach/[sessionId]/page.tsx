@@ -397,7 +397,6 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
-      {gate}
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
         <h1 className="mt-3 font-serif text-2xl font-semibold">Overall Score: {feedback.overall_score}</h1>

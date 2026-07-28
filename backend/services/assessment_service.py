@@ -244,11 +244,23 @@ async def start_assessment(user_id: str = Depends(require_auth)):
 async def _begin_assessment(user_id: str):
     existing = await db.baselineassessment.find_first(where={"userId": user_id, "completedAt": None})
     if existing:
+        # BAS-US-01 E-02 recovery: every question is already answered but the row never
+        # completed (scoring crashed / the app died between the last answer and scoring).
+        # Handing back the last question here would dead-end the user for good — the next
+        # submit answers "No more questions to submit", /start keeps returning the same
+        # question, and assessmentStatus stays IN_PROGRESS so the whole app remains locked.
+        # /start is the one entry point the UI always has after a crash (the assessment_id
+        # is gone), so retry scoring from the saved responses right here instead.
+        if existing.currentIndex >= len(existing.questionIds):
+            result = await _try_complete_assessment(existing)
+            if result.get("status") == "processing":
+                return result  # still failing — honest "results processing", not a dead question
+            return {**result, "resumed": True, "recovered": True}
+
         # Resume, don't dead-end. A browser back / refresh / accidental navigation loses
         # the client-side assessment_id; the old 400 then trapped the user (can't start a
         # second, can't resume the first). Return the current question so "Start" resumes
-        # exactly where they left off. currentIndex is always < len for a non-completed row
-        # (reaching len triggers completion), but clamp defensively.
+        # exactly where they left off.
         idx = min(existing.currentIndex, len(existing.questionIds) - 1)
         resume_q = _question_bank.get_by_id(existing.questionIds[idx])
         return {
@@ -504,6 +516,39 @@ async def get_voice_token(assessment_id: str, user_id: str = Depends(require_aut
             content={"error": "Voice mode unavailable. Use text mode instead."},
         )
     return livekit_tokens.mint_room_token(assessment_id, identity=user_id)
+
+
+async def restart_assessment(user_id: str = Depends(require_auth)):
+    """Discard an unfinished baseline and hand back a fresh one (BAS-US-01 E-02 escape hatch).
+
+    Without this, a baseline that can never finish scoring — corrupt saved responses, a
+    permanently failing scorer — leaves the account stuck at `assessment_required` with
+    every gated feature locked and no user-reachable way out.
+
+    Deliberately refuses once a baseline HAS completed: that path must go through
+    /reassessment/start so the 30-day cycle and early-retake cooldown still apply, and so
+    a finished baseline can never be silently thrown away.
+    """
+    completed = await db.baselineassessment.count(
+        where={"userId": user_id, "completedAt": {"not": None}}
+    )
+    if completed:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Baseline already completed. Use re-assessment to retake."},
+        )
+
+    discarded = await db.baselineassessment.delete_many(
+        where={"userId": user_id, "completedAt": None}
+    )
+    # Back to UNASSESSED so gating reports "not started" rather than a phantom in-progress run.
+    await db.user.update(
+        where={"id": user_id}, data={"assessmentStatus": AssessmentStatus.UNASSESSED}
+    )
+    logger.info("Restarted baseline for user %s (discarded %s unfinished row(s))", user_id, discarded)
+
+    fresh = await _begin_assessment(user_id)
+    return {**fresh, "restarted": True, "discarded_attempts": discarded}
 
 
 async def get_assessment_status(assessment_id: str, user_id: str = Depends(require_auth)):

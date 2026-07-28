@@ -4,7 +4,7 @@ import type { VoiceTokenResult } from "./useLiveKitVoice";
 // ── Types (mirrors Backend/services/assessment_service.py, gating_service.py,
 // reassessment_service.py response shapes) ──────────────────────────────────
 
-export interface StartAssessmentResult {
+export interface StartAssessmentQuestion {
   assessment_id: string;
   total_questions: number;
   current_question: string;
@@ -15,6 +15,29 @@ export interface StartAssessmentResult {
   // True when start resumed an existing in-progress assessment (browser back/refresh)
   // instead of creating a new one — see assessment_service._begin_assessment.
   resumed?: boolean;
+  // True when /restart discarded an unfinishable attempt and issued this fresh one.
+  restarted?: boolean;
+  discarded_attempts?: number;
+}
+
+/** /start can also come back without a question: the previous attempt had every answer
+ *  saved but never finished scoring, so the server retried it instead of handing back a
+ *  dead question (see assessment_service._begin_assessment). */
+export interface StartAssessmentRecovered {
+  status: "completed";
+  assessment_id: string;
+}
+
+export type StartAssessmentResult =
+  | StartAssessmentQuestion
+  | StartAssessmentRecovered
+  | AssessmentProcessing;
+
+/** Narrowing helper: did /start hand back an actual question to answer? */
+export function isAssessmentQuestion(
+  result: StartAssessmentResult,
+): result is StartAssessmentQuestion {
+  return !("status" in result);
 }
 
 export interface SubmitResponseInProgress {
@@ -136,6 +159,12 @@ export interface ReassessmentEligibility {
 
 export function startAssessment() {
   return api<StartAssessmentResult>("/assessment/start", { method: "POST" });
+}
+
+/** Discard an unfinished baseline and get a fresh one. Only valid while no baseline has
+ *  completed — the escape hatch for an attempt that can never finish scoring. */
+export function restartAssessment() {
+  return api<StartAssessmentQuestion>("/assessment/restart", { method: "POST" });
 }
 
 export function submitAssessmentResponse(

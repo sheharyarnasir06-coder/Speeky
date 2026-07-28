@@ -21,6 +21,8 @@ import {
   confirmSkipAssessment,
   getAssessmentVoiceToken,
   getResultsSummary,
+  isAssessmentQuestion,
+  restartAssessment,
   startAssessment,
   submitAssessmentResponse,
   type AssessmentSummary,
@@ -146,6 +148,14 @@ export default function AssessmentPage() {
     setIsSubmitting(true);
     try {
       const result = await startAssessment();
+      // A previous attempt may have had every answer saved but never finished scoring;
+      // the server retries it and returns a status instead of a question. Hand those to
+      // the analyzing flow (which already polls/retries) rather than rendering an
+      // undefined question.
+      if (!isAssessmentQuestion(result)) {
+        await fetchResultsWithAnalysisStep(result.assessment_id);
+        return;
+      }
       setStep({
         name: "question",
         assessmentId: result.assessment_id,
@@ -156,6 +166,30 @@ export default function AssessmentPage() {
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  /** Escape hatch when an attempt can never finish scoring: throw the unfinished
+   *  attempt away and begin a clean one, so the account can't stay locked forever. */
+  async function handleRestart() {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+      localStorage.removeItem("speeky_pending_baseline_id");
+      const result = await restartAssessment();
+      setStep({
+        name: "question",
+        assessmentId: result.assessment_id,
+        questionIndex: result.question_index,
+        totalQuestions: result.total_questions,
+        question: result.current_question,
+        questionMode: result.question_mode,
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't restart the assessment.");
     } finally {
       setIsSubmitting(false);
     }
@@ -327,14 +361,21 @@ export default function AssessmentPage() {
         {error && (
           <div className="flex flex-col gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-foreground">
             <p>{error}</p>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => fetchResultsWithAnalysisStep(step.assessmentId)}
-            >
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Retry Fetching Results
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => fetchResultsWithAnalysisStep(step.assessmentId)}
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Retry Fetching Results
+              </Button>
+              {/* Last resort if scoring can never finish — otherwise the account would
+                  stay locked behind an assessment that cannot complete. */}
+              <Button size="sm" variant="ghost" onClick={handleRestart} loading={isSubmitting}>
+                Start the assessment over
+              </Button>
+            </div>
           </div>
         )}
       </div>
