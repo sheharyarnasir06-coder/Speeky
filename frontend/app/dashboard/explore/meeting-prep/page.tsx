@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, Sparkles } from "lucide-react";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * US-66 mockup — the GitHub issue ("Workplace English - Meeting Preparation
@@ -73,33 +76,46 @@ export default function MeetingPrepFeedbackPage() {
           {TRANSCRIPT.map((line, i) => (
             <div
               key={i}
-              className={line.speaker === "user" ? "ml-auto max-w-md" : "max-w-md"}
+              className={
+                line.speaker === "user"
+                  ? "ml-auto flex max-w-md items-start gap-2"
+                  : "flex max-w-xl items-start gap-2"
+              }
             >
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {line.speaker === "user" ? "You" : "Coach"}
-              </span>
-              <div
-                className={
-                  line.speaker === "user"
-                    ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
-                    : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
-                }
-              >
-                {line.text}
-              </div>
-              {line.tags ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {line.tags.map((tag) => (
-                    <span
-                      key={tag.label}
-                      className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
-                    >
-                      <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                      {tag.label}
-                    </span>
-                  ))}
+              {line.speaker === "coach" ? <AiCoachAvatar className="mt-5" /> : null}
+              <div className="min-w-0 flex-1">
+                <span
+                  className={cn(
+                    "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                    line.speaker === "user" && "text-right",
+                  )}
+                >
+                  {line.speaker === "user" ? "You" : "Coach"}
+                </span>
+                <div
+                  className={
+                    line.speaker === "user"
+                      ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
+                      : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
+                  }
+                >
+                  {line.text}
                 </div>
-              ) : null}
+                {line.tags ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {line.tags.map((tag) => (
+                      <span
+                        key={tag.label}
+                        className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
+                      >
+                        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                        {tag.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              {line.speaker === "user" ? <UserChatAvatar className="mt-5" /> : null}
             </div>
           ))}
         </div>

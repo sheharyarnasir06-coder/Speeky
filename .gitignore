@@ -21,4 +21,4 @@ voice_agent/models/
 output
 venv
 .claude
-.devin2
+.devin

@@ -510,6 +510,7 @@ export default function AssessmentPage() {
               <Button
                 size="sm"
                 variant="outline"
+                className={isVoiceActive ? "voice-listening-button" : undefined}
                 loading={isConnectingVoice || isStoppingVoice}
                 disabled={isConnectingVoice || isStoppingVoice}
                 onClick={isVoiceActive ? handleStopVoice : () => void runWithVoiceReadiness(handleStartVoice)}

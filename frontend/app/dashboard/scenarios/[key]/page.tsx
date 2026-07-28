@@ -12,6 +12,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { MilestoneCelebrationModal } from "@/components/dashboard/MilestoneCelebrationModal";
 import { ApiError } from "@/lib/api";
@@ -32,6 +34,7 @@ import { useAutoSpeak } from "@/lib/useAutoSpeak";
 import { stopCurrent } from "@/lib/tts";
 import { usePracticeTimePing } from "@/lib/usePracticeTimePing";
 import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
+import { cn } from "@/lib/utils";
 
 interface ChatTurn {
   role: "assistant" | "user";
@@ -373,21 +376,32 @@ export default function ScenarioSessionPage() {
               <div
                 key={i}
                 className={
-                  turn.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[80%]"
+                  turn.role === "user"
+                    ? "ml-auto flex max-w-[86%] items-start gap-2"
+                    : "flex max-w-[86%] items-start gap-2"
                 }
               >
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {turn.role === "user" ? "You" : step.session.persona}
-                </span>
-                <div
-                  className={
-                    turn.role === "user"
-                      ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
-                      : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
-                  }
-                >
-                  {turn.content}
+                {turn.role === "assistant" ? <AiCoachAvatar className="mt-5" /> : null}
+                <div className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                      turn.role === "user" && "text-right",
+                    )}
+                  >
+                    {turn.role === "user" ? "You" : step.session.persona}
+                  </span>
+                  <div
+                    className={
+                      turn.role === "user"
+                        ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
+                        : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
+                    }
+                  >
+                    {turn.content}
+                  </div>
                 </div>
+                {turn.role === "user" ? <UserChatAvatar className="mt-5" /> : null}
               </div>
             ))}
           </div>
@@ -418,6 +432,7 @@ export default function ScenarioSessionPage() {
               <Button
                 size="md"
                 variant="outline"
+                className="voice-listening-button"
                 loading={isStoppingVoice}
                 onClick={() => void stopVoice()}
               >

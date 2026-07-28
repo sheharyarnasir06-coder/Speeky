@@ -41,6 +41,18 @@ TOPICS = {
     "work": "Casual Work & Career",
 }
 
+# PDG-US-11: Daily Challenge redirects into an AI Conversation session on the topic that
+# best matches the learner's signup goal (users.learningGoal — schemas.user_schemas).
+# The two vocabularies don't line up 1:1 (there's no "interview" or "public speaking"
+# preset topic), so job_interviews/workplace_communication both land on "work" and
+# public_speaking lands on "education" as the closest existing presets.
+GOAL_TOPIC_MAP = {
+    "improve_english": "daily_life",
+    "job_interviews": "work",
+    "workplace_communication": "work",
+    "public_speaking": "education",
+}
+
 EXTRA_RULES = {
     "daily_life": """Topic-specific rules:
 - If user gives single-word answers ("Yes"/"Nothing"), gently probe for more detail.
@@ -988,39 +1000,14 @@ INTERRUPTION_MESSAGES = {
 
 
 # ===========================================================================
-# Daily Challenge anti-gaming detection (US-168 / GAP-07)
-# ===========================================================================
-# Duration/turn thresholds mirror the "5-minute session" described in the story.
+# Daily Challenge (PDG-US-11): redirects into a real AI Conversation session (see
+# GOAL_TOPIC_MAP above) and completes on elapsed time since the user's first prompt in
+# that session — no separate audio-turn/content-quality gate. The conversation itself
+# (rate limiting, gibberish-strike cutoff, PII redaction — see conversation_service)
+# is the guardrail against gaming, rather than a bespoke heuristic on throwaway clips.
 DAILY_CHALLENGE_MIN_DURATION_SECONDS = 300
-DAILY_CHALLENGE_MIN_TURNS = 3
-
-# Content-quality thresholds fed to the (stubbed) quality scorer. Kept lenient on
-# purpose — AC requires beginners are never penalized for low skill, only for
-# clear filler/repetition patterns.
-DAILY_CHALLENGE_MIN_QUALITY_SCORE = 0.35
-DAILY_CHALLENGE_MIN_UNIQUE_WORD_RATIO = 0.4
-DAILY_CHALLENGE_MAX_DOMINANT_TOKEN_RATIO = 0.6
-DAILY_CHALLENGE_MIN_WORDS_FOR_REPETITION_CHECK = 4
 
 STREAK_MILESTONE_DAYS = (3, 7, 14, 30, 60, 100)
-
-LOW_ENGAGEMENT_NUDGE_MESSAGE = (
-    "That one didn't quite count towards your streak — it looked like filler or "
-    "repeated words rather than real conversation. No worries, give it another go "
-    "whenever you're ready!"
-)
-NON_INTERACTIVE_REJECTION_MESSAGE = (
-    "We couldn't confirm this was a live conversation with you, so this session "
-    "wasn't counted. Please make sure you're speaking directly into the mic."
-)
-DISPUTE_CONFIRMED_MESSAGE = (
-    "Thanks for flagging that — we've reviewed it, confirmed it was genuine, and "
-    "credited your streak."
-)
-DISPUTE_DENIED_MESSAGE = (
-    "We looked into it again and the session still doesn't meet the engagement bar. "
-    "Your streak wasn't credited for this one."
-)
 
 
 def build_milestone_message(days: int) -> str:

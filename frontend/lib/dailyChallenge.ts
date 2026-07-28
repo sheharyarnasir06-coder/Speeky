@@ -34,9 +34,10 @@ export function getDailyChallengeStatus() {
   );
 }
 
-// Note: challenge COMPLETION now goes through the US-168 audio-turn flow in
-// lib/daily-challenge.ts (start -> turn -> complete). This module only reads streak
-// state for the navbar icon + reminder banner (PDG-US-11/13), off the same kv store.
+// Note: challenge START + COMPLETION go through lib/daily-challenge.ts (start redirects
+// into an AI Conversation session; completion is timer-based, polled from that session's
+// page). This module only reads streak state for the navbar icon + reminder banner
+// (PDG-US-11/13), off the same kv store.
 
 export function getStreakNotification() {
   const now = new Date();

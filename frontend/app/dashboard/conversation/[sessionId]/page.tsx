@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "react-toastify";
 import {
   CheckCircle2,
@@ -12,6 +12,8 @@ import {
   Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api";
@@ -27,6 +29,8 @@ import {
   scoreConversationTurn,
   type SentenceScoreResult,
 } from "@/lib/pronunciationCoach";
+import { localDate } from "@/lib/dailyChallenge";
+import { getChallengeConversationStatus } from "@/lib/daily-challenge";
 import { ScoreDisputeButton } from "@/components/dashboard/ScoreDisputeButton";
 import { playText, stopCurrent } from "@/lib/tts";
 import { useAutoScroll } from "@/lib/useAutoScroll";
@@ -118,9 +122,13 @@ function PronunciationBreakdown({
   );
 }
 
+const DAILY_CHALLENGE_POLL_MS = 15_000;
+
 export default function ConversationSessionPage() {
   const params = useParams<{ sessionId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isDailyChallenge = searchParams.get("daily") === "1";
   const [turns, setTurns] = React.useState<ConversationTurn[] | null>(null);
   const [topicLabel, setTopicLabel] = React.useState("");
   const [message, setMessage] = React.useState("");
@@ -239,6 +247,43 @@ export default function ConversationSessionPage() {
   React.useEffect(() => {
     if (voiceError) setError(voiceError);
   }, [voiceError]);
+
+  // PDG-US-11: this session was started via the Daily Challenge redirect. The 5-minute
+  // timer runs server-side off the first prompt, so poll rather than compute it
+  // client-side — that way it still completes (and the user still gets the alert) even
+  // if they go quiet after one message instead of sending another.
+  const [challengeDone, setChallengeDone] = React.useState(false);
+  React.useEffect(() => {
+    if (!isDailyChallenge || challengeDone) return;
+
+    let cancelled = false;
+    async function poll() {
+      try {
+        const res = await getChallengeConversationStatus(params.sessionId, localDate());
+        if (cancelled) return;
+        if (res.status === "qualified") {
+          setChallengeDone(true);
+          if (res.just_completed) {
+            toast.success(
+              `🔥 Daily Challenge complete — ${res.current_streak}-day streak!${
+                res.milestone_message ? ` ${res.milestone_message}` : ""
+              }`,
+            );
+            window.dispatchEvent(new CustomEvent("speeky:streak-updated"));
+          }
+        }
+      } catch {
+        // Best-effort — a poll failure just tries again next tick.
+      }
+    }
+
+    void poll();
+    const interval = window.setInterval(poll, DAILY_CHALLENGE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isDailyChallenge, challengeDone, params.sessionId]);
 
   async function handleStartVoice() {
     setError(null);
@@ -447,51 +492,62 @@ export default function ConversationSessionPage() {
             <div
               key={i}
               className={
-                turn.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[80%]"
+                turn.role === "user"
+                  ? "ml-auto flex max-w-[86%] items-start gap-2"
+                  : "flex max-w-[86%] items-start gap-2"
               }
             >
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {turn.role === "user" ? "You" : "Coach"}
-              </span>
-              <div
-                className={
-                  turn.role === "user"
-                    ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
-                    : "flex items-start gap-2 rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
-                }
-              >
-                <span className="flex-1">{turn.content}</span>
-                {turn.role === "assistant" ? (
-                  <button
-                    type="button"
-                    onClick={() => void handlePlay(i, turn.content)}
-                    disabled={playingIndex === i}
-                    aria-label="Play audio"
-                    className="shrink-0 text-primary hover:opacity-70 disabled:animate-pulse"
-                  >
-                    <Volume2 className="h-4 w-4" aria-hidden="true" />
-                  </button>
+              {turn.role === "assistant" ? <AiCoachAvatar className="mt-5" /> : null}
+              <div className="min-w-0 flex-1">
+                <span
+                  className={cn(
+                    "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                    turn.role === "user" && "text-right",
+                  )}
+                >
+                  {turn.role === "user" ? "You" : "Coach"}
+                </span>
+                <div
+                  className={
+                    turn.role === "user"
+                      ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
+                      : "flex items-start gap-2 rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
+                  }
+                >
+                  <span className="flex-1">{turn.content}</span>
+                  {turn.role === "assistant" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handlePlay(i, turn.content)}
+                      disabled={playingIndex === i}
+                      aria-label="Play audio"
+                      className="shrink-0 text-primary hover:opacity-70 disabled:animate-pulse"
+                    >
+                      <Volume2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
+                {turn.correction_chip ? (
+                  <div className="mt-1.5 rounded-lg bg-warning/10 px-3 py-2 text-xs text-foreground">
+                    <span className="line-through opacity-70">
+                      {turn.correction_chip.original}
+                    </span>{" "}
+                    <span className="font-medium text-success">
+                      {turn.correction_chip.corrected}
+                    </span>
+                    <p className="mt-0.5 text-muted-foreground">
+                      {turn.correction_chip.explanation}
+                    </p>
+                  </div>
+                ) : null}
+                {turn.role === "user" && turn.input_mode === "audio" ? (
+                  <PronunciationBreakdown
+                    sessionId={params.sessionId}
+                    turnIndex={i}
+                  />
                 ) : null}
               </div>
-              {turn.correction_chip ? (
-                <div className="mt-1.5 rounded-lg bg-warning/10 px-3 py-2 text-xs text-foreground">
-                  <span className="line-through opacity-70">
-                    {turn.correction_chip.original}
-                  </span>{" "}
-                  <span className="font-medium text-success">
-                    {turn.correction_chip.corrected}
-                  </span>
-                  <p className="mt-0.5 text-muted-foreground">
-                    {turn.correction_chip.explanation}
-                  </p>
-                </div>
-              ) : null}
-              {turn.role === "user" && turn.input_mode === "audio" ? (
-                <PronunciationBreakdown
-                  sessionId={params.sessionId}
-                  turnIndex={i}
-                />
-              ) : null}
+              {turn.role === "user" ? <UserChatAvatar className="mt-5" /> : null}
             </div>
           ))}
         </div>
@@ -525,6 +581,7 @@ export default function ConversationSessionPage() {
             <Button
               size="md"
               variant="outline"
+              className="voice-listening-button"
               loading={isStoppingVoice}
               onClick={() => void handleStopVoice()}
             >

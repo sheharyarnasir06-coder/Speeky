@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 import { Coffee, Mic, MicOff, Pause, Play, Share2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
@@ -278,22 +280,28 @@ export default function InterviewCoachSessionPage() {
         <div ref={scrollRef} className="flex max-h-[55vh] flex-col gap-4 overflow-y-auto">
           {turns.map((turn, i) => (
             <div key={i} className="flex flex-col gap-2">
-              <div className="max-w-[85%]">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {turn.speaker}
-                </span>
-                <div className="rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground">
-                  {turn.question}
+              <div className="flex max-w-[88%] items-start gap-2">
+                <AiCoachAvatar className="mt-5" />
+                <div className="min-w-0 flex-1">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {turn.speaker}
+                  </span>
+                  <div className="rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground">
+                    {turn.question}
+                  </div>
                 </div>
               </div>
               {turn.answer ? (
-                <div className="ml-auto max-w-[85%]">
-                  <span className="mb-1 block text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    You
-                  </span>
-                  <div className="rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground">
-                    {turn.answer}
+                <div className="ml-auto flex max-w-[88%] items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <span className="mb-1 block text-right text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      You
+                    </span>
+                    <div className="rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground">
+                      {turn.answer}
+                    </div>
                   </div>
+                  <UserChatAvatar className="mt-5" />
                 </div>
               ) : null}
             </div>
@@ -331,6 +339,7 @@ export default function InterviewCoachSessionPage() {
               <Button
                 size="md"
                 variant="outline"
+                className="voice-listening-button"
                 loading={isStoppingVoice}
                 onClick={() => void stopVoice()}
               >

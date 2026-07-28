@@ -12,7 +12,7 @@ import { resendSignupOtp, signup, verifySignupOtp } from "@/lib/auth";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   LEARNING_GOALS,
-  setLearningGoal,
+  saveLearningGoal,
   type LearningGoal,
 } from "@/lib/goals";
 import { LegalModal } from "@/components/common/LegalModal";
@@ -87,11 +87,14 @@ function validate(values: SignupFieldValues) {
 }
 
 /**
- * Three-step signup: (1) credentials, (2) mandatory learning-goal selection
- * (US-08 AC), (3) email OTP verification — the backend creates no account
- * and no session until the emailed code is verified (signup only queues a
- * pending row + sends the code). Resend is gated client-side: 60s cooldown,
- * 3 resends max per signup attempt (the backend itself has no such limit).
+ * Three-step signup: (1) credentials, (2) email OTP verification, (3) mandatory
+ * learning-goal selection (US-08 AC). The backend creates no account and no
+ * session until the emailed code is verified (signup only queues a pending row +
+ * sends the code), so the goal step MUST come after verification — there is no
+ * user row to attach it to before then. Once verified, the goal is PATCHed onto
+ * the real profile (users.learningGoal) rather than kept client-side.
+ * Resend is gated client-side: 60s cooldown, 3 resends max per signup attempt
+ * (the backend itself has no such limit).
  *
  * Google/Apple SSO (also called for in US-08) has no backend support at
  * all (no OAuth routes exist), so those buttons are shown disabled rather
@@ -100,7 +103,7 @@ function validate(values: SignupFieldValues) {
 export function SignupForm({ onSubmit }: SignupFormProps) {
   const router = useRouter();
   const { setUser } = useAuth();
-  const [step, setStep] = React.useState<"credentials" | "goal" | "otp">(
+  const [step, setStep] = React.useState<"credentials" | "otp" | "goal">(
     "credentials",
   );
   const [values, setValues] = React.useState<SignupFieldValues>({
@@ -149,7 +152,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
     setTouched((prev) => ({ ...prev, [field]: true }));
   }
 
-  function handleContinue(event: React.FormEvent<HTMLFormElement>) {
+  async function handleContinue(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setTouched({
       firstName: true,
@@ -164,13 +167,6 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
     if (Object.keys(currentErrors).length > 0 || !agreedToTerms) {
       return;
     }
-
-    setFormError(null);
-    setStep("goal");
-  }
-
-  async function handleRequestOtp() {
-    if (!goal) return;
 
     const fullName =
       `${values.firstName.trim()} ${values.lastName.trim()}`.trim();
@@ -205,7 +201,6 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
   }
 
   async function handleVerifyOtp() {
-    if (!goal) return;
     if (otp.trim().length !== OTP_LENGTH) {
       setOtpError(`Enter the ${OTP_LENGTH}-character code from your email.`);
       return;
@@ -218,10 +213,11 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
         email: values.email.trim(),
         code: otp.trim().toUpperCase(),
       });
-      setLearningGoal(user.id, goal);
+      // Account + session now exist. Log the user in here (rather than after the
+      // goal step) so the goal PATCH below is an authenticated call, and so a
+      // user who closes the tab mid-goal-step is still signed up.
       setUser(user);
-      toast.success(`Welcome to Speeky, ${user.name.split(" ")[0]}!`);
-      router.push("/dashboard");
+      setStep("goal");
     } catch (error) {
       setOtpError(
         error instanceof ApiError
@@ -230,6 +226,27 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
       );
     } finally {
       setIsVerifying(false);
+    }
+  }
+
+  async function handleSaveGoal() {
+    if (!goal) return;
+
+    setIsSubmitting(true);
+    setFormError(null);
+    try {
+      const { user } = await saveLearningGoal(goal);
+      setUser(user);
+      toast.success(`Welcome to Speeky, ${user.name.split(" ")[0]}!`);
+      router.push("/dashboard");
+    } catch (error) {
+      setFormError(
+        error instanceof ApiError
+          ? error.message
+          : "Couldn't save your goal. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -311,7 +328,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
 
         <button
           type="button"
-          onClick={() => setStep("goal")}
+          onClick={() => setStep("credentials")}
           className="text-sm font-medium text-muted-foreground hover:text-foreground"
         >
           Back
@@ -325,11 +342,12 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
       <div className="flex flex-col gap-5">
         <div>
           <p className="text-sm font-medium text-foreground">
-            What&apos;s your main goal?
+            Email verified — what&apos;s your main goal?
           </p>
           <p className="text-sm text-muted-foreground">
-            We&apos;ll tailor your dashboard and recommended scenarios around
-            it.
+            We&apos;ll save this to your profile and tailor your dashboard,
+            daily challenge, and recommended scenarios around it. You can change
+            it any time from your profile.
           </p>
         </div>
 
@@ -358,27 +376,17 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
 
         {formError ? <p className="text-sm text-danger">{formError}</p> : null}
 
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            size="lg"
-            loading={isSubmitting}
-            disabled={!goal}
-            onClick={handleRequestOtp}
-            className="flex-1"
-          >
-            Continue
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="lg"
-            disabled={isSubmitting}
-            onClick={() => setStep("credentials")}
-          >
-            Back
-          </Button>
-        </div>
+        {/* No "Back" here: the account and session already exist by this point,
+            so there is nothing to go back to. */}
+        <Button
+          type="button"
+          size="lg"
+          loading={isSubmitting}
+          disabled={!goal}
+          onClick={handleSaveGoal}
+        >
+          Finish Setup
+        </Button>
       </div>
     );
   }
@@ -477,7 +485,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
 
         {formError ? <p className="text-sm text-danger">{formError}</p> : null}
 
-        <Button type="submit" size="lg" className="mt-2">
+        <Button type="submit" size="lg" className="mt-2" loading={isSubmitting}>
           Continue
         </Button>
 

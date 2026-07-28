@@ -1,10 +1,12 @@
+import { api } from "./api";
+import type { AuthUser } from "./auth";
+
 /**
- * Learning-goal selection (US-08, US-10). The backend User model has no
- * `goal` field or endpoint yet, so this is stored client-side per user.
- *
- * TODO(backend): add a `goal` column to the User model + accept it in
- * SignupSchema / UpdateProfileSchema, then replace this localStorage shim
- * with real GET/PATCH /api/users/me calls.
+ * Learning-goal selection (US-08, US-10). Persisted on the User row
+ * (`users.learningGoal`) and read back with the profile, so the choice
+ * survives logout and follows the account across devices — it is picked in
+ * signup only AFTER the email OTP is verified, because no user row exists
+ * before that point.
  */
 
 export type LearningGoal =
@@ -65,19 +67,24 @@ export const GOAL_DASHBOARD_COPY: Record<
   },
 };
 
-const DEFAULT_GOAL: LearningGoal = "improve_english";
-const storageKey = (userId: string) => `speeky:goal:${userId}`;
+// E-03 (Goal Selection Abandonment): the column defaults to "improve_english",
+// so an abandoned goal step still leaves a usable profile rather than an unset one.
+export const DEFAULT_GOAL: LearningGoal = "improve_english";
 
-// E-03 (Goal Selection Abandonment): defaults to "Improve English" instead
-// of leaving the user in an unset state.
-export function getLearningGoal(userId: string): LearningGoal {
-  if (typeof window === "undefined") return DEFAULT_GOAL;
-  const value = window.localStorage.getItem(storageKey(userId));
-  const match = LEARNING_GOALS.find((goal) => goal.id === value);
-  return match?.id ?? DEFAULT_GOAL;
+/** Narrow an arbitrary stored value to a known goal, falling back to the default. */
+export function normalizeGoal(value: string | null | undefined): LearningGoal {
+  return LEARNING_GOALS.find((goal) => goal.id === value)?.id ?? DEFAULT_GOAL;
 }
 
-export function setLearningGoal(userId: string, goal: LearningGoal) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(storageKey(userId), goal);
+export function fetchLearningGoal() {
+  return api<{ learning_goal: LearningGoal }>("/users/me/learning-goal");
+}
+
+/** Persists the goal and returns the refreshed profile, so callers can push it
+ *  straight into AuthContext instead of refetching. */
+export function saveLearningGoal(goal: LearningGoal) {
+  return api<{ user: AuthUser }>("/users/me/learning-goal", {
+    method: "PATCH",
+    body: JSON.stringify({ learning_goal: goal }),
+  });
 }

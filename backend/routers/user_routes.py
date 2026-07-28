@@ -3,9 +3,11 @@ from fastapi import APIRouter
 from services.user_service import (
     delete_account,
     get_accent_preference,
+    get_learning_goal,
     get_profile,
     list_users,
     set_accent_preference,
+    set_learning_goal,
     request_email_change,
     transfer_super_admin,
     update_profile,
@@ -21,6 +23,9 @@ router = APIRouter()
 router.add_api_route("/me", get_profile, methods=["GET"])
 router.add_api_route("/me", update_profile, methods=["PATCH"])
 router.add_api_route("/me", delete_account, methods=["DELETE"])
+# Learning goal — picked after signup OTP verification (US-08), editable later (US-10)
+router.add_api_route("/me/learning-goal", get_learning_goal, methods=["GET"])
+router.add_api_route("/me/learning-goal", set_learning_goal, methods=["PATCH"])
 # Accent Model Preference toggle (ACC-US-11)
 router.add_api_route("/me/accent-preference", get_accent_preference, methods=["GET"])
 router.add_api_route("/me/accent-preference", set_accent_preference, methods=["PATCH"])

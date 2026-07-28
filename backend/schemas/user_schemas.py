@@ -3,6 +3,32 @@ from schemas.auth_schemas import _require_email_format
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
+# US-08/US-10. Mirrors Frontend/lib/goals.ts LEARNING_GOALS — keep the two in sync.
+LearningGoal = Literal[
+    "improve_english",
+    "job_interviews",
+    "workplace_communication",
+    "public_speaking",
+]
+DEFAULT_LEARNING_GOAL: str = "improve_english"
+
+
+class LearningGoalSchema(BaseModel):
+    """PATCH body — set/change the goal. Saving always marks learningGoalSet=true
+    (see services.user_service.set_learning_goal), which is what clears the
+    Frontend LearningGoalGate for pre-US-08 accounts."""
+
+    learning_goal: LearningGoal
+
+
+class LearningGoalStatusSchema(BaseModel):
+    """GET response — includes learning_goal_set so the caller can tell a real
+    choice apart from the untouched default (pre-US-08 accounts)."""
+
+    learning_goal: LearningGoal
+    learning_goal_set: bool
+
+
 class UpdateProfileSchema(BaseModel):
     """Name only — email changes go through RequestEmailChangeSchema /
     VerifyEmailChangeSchema instead, since they need OTP verification."""

@@ -15,6 +15,8 @@ from middlewares.auth_middleware import require_admin, require_auth, require_sup
 from prisma.enums import Role
 from schemas.user_schemas import (
     DeleteAccountSchema,
+    LearningGoalSchema,
+    LearningGoalStatusSchema,
     RequestEmailChangeSchema,
     AccentPreferenceSchema,
     UpdateProfileSchema,
@@ -41,6 +43,8 @@ def _serialize(user) -> dict:
         "name": user.name,
         "avatarUrl": user.avatarUrl,
         "role": user.role,
+        "learningGoal": user.learningGoal,
+        "learningGoalSet": user.learningGoalSet,
         "createdAt": user.createdAt.isoformat(),
     }
 
@@ -54,6 +58,30 @@ async def get_profile(user_id: str = Depends(require_auth)):
 
 async def update_profile(payload: UpdateProfileSchema, user_id: str = Depends(require_auth)):
     user = await db.user.update(where={"id": user_id}, data={"name": payload.name})
+    return {"user": _serialize(user)}
+
+
+# ── Learning goal (US-08 signup selection, US-10 later edits) ─────────────────
+# Its own route rather than a field on UpdateProfileSchema: signup's goal step and
+# the profile page's Learning Goal card both submit the goal alone, and
+# UpdateProfileSchema.name is required.
+async def get_learning_goal(user_id: str = Depends(require_auth)):
+    user = await db.user.find_unique(where={"id": user_id})
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    return LearningGoalStatusSchema(
+        learning_goal=user.learningGoal, learning_goal_set=user.learningGoalSet
+    )
+
+
+async def set_learning_goal(payload: LearningGoalSchema, user_id: str = Depends(require_auth)):
+    # learningGoalSet flips true here regardless of whether this is the pre-US-08
+    # onboarding fallback, the signup goal step, or a later profile edit — all three
+    # are "the user has now made a real choice", which is the only thing this flag means.
+    user = await db.user.update(
+        where={"id": user_id},
+        data={"learningGoal": payload.learning_goal, "learningGoalSet": True},
+    )
     return {"user": _serialize(user)}
 
 

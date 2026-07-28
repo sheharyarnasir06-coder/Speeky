@@ -10,15 +10,29 @@ import {
 
 // Navbar daily-streak indicator (PDG-US-11). Filled/colored flame once today's challenge
 // is complete, grayed outline while it's still pending; the streak-day count sits to the
-// left of the flame. Links to the daily challenge (a conversation session).
+// left of the flame. Links to the dashboard's Daily Challenge card, which starts the
+// goal-matched AI Conversation session (POST /daily-challenge/start) — this icon stays a
+// read-only indicator rather than duplicating that start logic.
 export function StreakNavIcon() {
   const [status, setStatus] = React.useState<DailyChallengeStatus | null>(null);
 
-  React.useEffect(() => {
+  const refresh = React.useCallback(() => {
     getDailyChallengeStatus()
       .then(setStatus)
       .catch(() => setStatus(null));
   }, []);
+
+  React.useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Fired by the conversation page the instant the linked Daily Challenge completes,
+  // so this lights up without waiting for a full page reload (client-side nav doesn't
+  // remount this component since it lives in the persistent dashboard layout).
+  React.useEffect(() => {
+    window.addEventListener("speeky:streak-updated", refresh);
+    return () => window.removeEventListener("speeky:streak-updated", refresh);
+  }, [refresh]);
 
   if (!status) return null;
 
@@ -26,7 +40,7 @@ export function StreakNavIcon() {
 
   return (
     <a
-      href="/dashboard/conversation"
+      href="/dashboard"
       title={
         done
           ? `Daily Challenge complete — ${status.current_streak}-day streak`

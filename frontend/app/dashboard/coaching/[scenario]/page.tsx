@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 import { CheckCircle2, Mic, MicOff, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,6 +24,7 @@ import {
 import { useAutoScroll } from "@/lib/useAutoScroll";
 import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
+import { cn } from "@/lib/utils";
 
 interface ChatTurn {
   role: "assistant" | "user";
@@ -284,6 +287,7 @@ export default function CoachingSessionPage() {
               <Button
                 size="sm"
                 variant="outline"
+                className={isListening ? "voice-listening-button" : undefined}
                 disabled={!isSpeechSupported}
                 onClick={
                   isListening
@@ -342,20 +346,33 @@ export default function CoachingSessionPage() {
             {step.turns.map((turn, i) => (
               <div
                 key={i}
-                className={turn.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[80%]"}
+                className={
+                  turn.role === "user"
+                    ? "ml-auto flex max-w-[86%] items-start gap-2"
+                    : "flex max-w-[86%] items-start gap-2"
+                }
               >
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {turn.role === "user" ? "You" : "Coach"}
-                </span>
-                <div
-                  className={
-                    turn.role === "user"
-                      ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
-                      : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
-                  }
-                >
-                  {turn.content}
+                {turn.role === "assistant" ? <AiCoachAvatar className="mt-5" /> : null}
+                <div className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                      turn.role === "user" && "text-right",
+                    )}
+                  >
+                    {turn.role === "user" ? "You" : "Coach"}
+                  </span>
+                  <div
+                    className={
+                      turn.role === "user"
+                        ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
+                        : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
+                    }
+                  >
+                    {turn.content}
+                  </div>
                 </div>
+                {turn.role === "user" ? <UserChatAvatar className="mt-5" /> : null}
               </div>
             ))}
           </div>
@@ -391,6 +408,7 @@ export default function CoachingSessionPage() {
                 <Button
                   size="md"
                   variant="outline"
+                  className="voice-listening-button"
                   loading={isStoppingVoice}
                   onClick={() => void stopVoice()}
                 >

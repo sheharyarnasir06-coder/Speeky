@@ -132,6 +132,20 @@ model User {
   lastChallengeDate String?
   streakBadges      Int[]   @default([])
 
+  // US-08/US-10: learning goal chosen right after email verification and editable
+  // from the profile page. String (not an enum) to match how the other
+  // preference columns above are stored — allowed values live in
+  // schemas.user_schemas.LEARNING_GOALS. Defaults instead of being nullable so
+  // goal-selection abandonment (E-03) still lands on a usable profile.
+  learningGoal String @default("improve_english")
+  // Pre-US-08 accounts never went through the goal step, so learningGoal above sits at
+  // its placeholder default and can't be told apart from a real "improve_english"
+  // choice. This flag is the real signal: false = never chosen, forces the blocking
+  // onboarding prompt on next login (Frontend LearningGoalGate). Defaults false so the
+  // migration backfills every existing row as "needs the prompt"; set_learning_goal
+  // flips it true the first time a user (new or backfilled) actually saves a choice.
+  learningGoalSet Boolean @default(false)
+
   @@map("users")
 }
 

@@ -6,39 +6,53 @@ import { Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { LEARNING_GOALS, getLearningGoal, setLearningGoal, type LearningGoal } from "@/lib/goals";
+import { ApiError } from "@/lib/api";
+import {
+  LEARNING_GOALS,
+  normalizeGoal,
+  saveLearningGoal,
+  type LearningGoal,
+} from "@/lib/goals";
 
 /**
- * US-10: Dynamic Goal Updating. No `goal` field exists on the backend User
- * model yet, so this persists to localStorage — see lib/goals.ts for the
- * backend TODO. The Home dashboard reads the same value to reorder/reframe
- * content around it (see app/dashboard/page.tsx), which is what satisfies
- * the "dashboard reorders instantly" acceptance criterion without a
- * network round trip.
+ * US-10: Dynamic Goal Updating. Persists to users.learningGoal and pushes the
+ * refreshed profile back into AuthContext, so the Home dashboard — which reads
+ * the goal off that same context — reorders immediately (see
+ * app/dashboard/page.tsx) without a second fetch.
  */
 export function LearningGoalSection() {
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
+  const saved = user ? normalizeGoal(user.learningGoal) : null;
   const [selected, setSelected] = React.useState<LearningGoal | null>(null);
-  const [saved, setSaved] = React.useState<LearningGoal | null>(null);
+  const [isSaving, setIsSaving] = React.useState(false);
 
   React.useEffect(() => {
     if (!user) return;
-    const current = getLearningGoal(user.id);
-    setSelected(current);
-    setSaved(current);
+    setSelected(normalizeGoal(user.learningGoal));
   }, [user]);
 
   if (!user || !selected) return null;
 
   const hasChanges = selected !== saved;
 
-  function handleUpdate() {
-    if (!user || !selected) return;
-    setLearningGoal(user.id, selected);
-    setSaved(selected);
-    toast.success(
-      `Focus area updated — now prioritizing ${LEARNING_GOALS.find((g) => g.id === selected)?.label}.`,
-    );
+  async function handleUpdate() {
+    if (!selected) return;
+    setIsSaving(true);
+    try {
+      const result = await saveLearningGoal(selected);
+      setUser(result.user);
+      toast.success(
+        `Focus area updated — now prioritizing ${LEARNING_GOALS.find((g) => g.id === selected)?.label}.`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError
+          ? error.message
+          : "Couldn't update your focus area.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -78,8 +92,9 @@ export function LearningGoalSection() {
         type="button"
         size="sm"
         className="mt-4"
+        loading={isSaving}
         disabled={!hasChanges}
-        onClick={handleUpdate}
+        onClick={() => void handleUpdate()}
       >
         Update Profile
       </Button>
