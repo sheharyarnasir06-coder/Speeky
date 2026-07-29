@@ -3,7 +3,15 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "react-toastify";
-import { Coffee, Mic, MicOff, Pause, Play, Share2, Sparkles } from "lucide-react";
+import {
+  Coffee,
+  Mic,
+  MicOff,
+  Pause,
+  Play,
+  Share2,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
 import { UserChatAvatar } from "@/components/common/UserChatAvatar";
@@ -17,6 +25,7 @@ import { useAutoScroll } from "@/lib/useAutoScroll";
 import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
 import {
   endInterviewSession,
+  getInterviewCoachSession,
   getInterviewCoachVoiceToken,
   pauseInterviewSession,
   resumeInterviewSession,
@@ -96,16 +105,35 @@ export default function InterviewCoachSessionPage() {
     if (voiceError) setError(voiceError);
   }, [voiceError]);
 
-  // Rehydrate from sessionStorage (no GET-session endpoint exists to refetch
-  // from the backend on reload — see lib/interviewCoach.ts).
+  // Rehydrate from sessionStorage — the fast path when this tab is the one that
+  // started the session. If that's empty (fresh navigation, e.g. the Explore
+  // resume banner, or sessionStorage was cleared), fall back to the backend,
+  // which is now the real source of truth either way.
   React.useEffect(() => {
     const raw = sessionStorage.getItem(storageKey);
     if (raw) {
       const parsed = JSON.parse(raw);
       setMode(parsed.mode);
       setTurns(parsed.turns);
+      return;
     }
-  }, [storageKey]);
+    getInterviewCoachSession(sessionId)
+      .then((state) => {
+        setMode(state.mode);
+        setTurns(
+          state.exchanges.map((ex) => ({
+            speaker: ex.speaker,
+            question: ex.question,
+            answer: ex.answer ?? null,
+            flags: ex.flags,
+          })),
+        );
+        if (state.status === "paused") setStatus("paused");
+      })
+      .catch(() => {
+        setError("Couldn't load this interview session.");
+      });
+  }, [storageKey, sessionId]);
 
   React.useEffect(() => {
     if (turns.length > 0) {
@@ -121,7 +149,8 @@ export default function InterviewCoachSessionPage() {
           resumeInterruptedSession(sessionId)
             .then((result) => {
               setResumeBanner(result.message);
-              if (result.partial_answer_text) setAnswer(result.partial_answer_text);
+              if (result.partial_answer_text)
+                setAnswer(result.partial_answer_text);
             })
             .catch(() => {});
         }
@@ -130,20 +159,24 @@ export default function InterviewCoachSessionPage() {
 
     function handleVisibility() {
       if (document.hidden) {
+        const partialAnswer = answerRef.current.trim();
+        if (!partialAnswer) return;
         logInterruption({
           session_id: sessionId,
           session_type: "interview_coach",
           interruption_type: "app_backgrounded",
-          partial_answer_text: answerRef.current || undefined,
+          partial_answer_text: partialAnswer,
         }).catch(() => {});
       }
     }
     function handleOffline() {
+      const partialAnswer = answerRef.current.trim();
+      if (!partialAnswer) return;
       logInterruption({
         session_id: sessionId,
         session_type: "interview_coach",
         interruption_type: "connectivity_drop",
-        partial_answer_text: answerRef.current || undefined,
+        partial_answer_text: partialAnswer,
       }).catch(() => {});
     }
     document.addEventListener("visibilitychange", handleVisibility);
@@ -180,8 +213,12 @@ export default function InterviewCoachSessionPage() {
     setIsSubmitting(true);
 
     const now = Date.now();
-    const silenceBefore = Math.round(((firstKeystrokeAt.current ?? now) - questionShownAt.current) / 1000);
-    const duration = Math.round((now - (firstKeystrokeAt.current ?? now)) / 1000);
+    const silenceBefore = Math.round(
+      ((firstKeystrokeAt.current ?? now) - questionShownAt.current) / 1000,
+    );
+    const duration = Math.round(
+      (now - (firstKeystrokeAt.current ?? now)) / 1000,
+    );
     const answerText = answer.trim();
 
     setTurns((prev) => {
@@ -208,7 +245,12 @@ export default function InterviewCoachSessionPage() {
         questionShownAt.current = Date.now();
         setTurns((prev) => [
           ...prev,
-          { speaker: result.next_speaker ?? "AI", question: result.next_question!, answer: null, flags: [] },
+          {
+            speaker: result.next_speaker ?? "AI",
+            question: result.next_question!,
+            answer: null,
+            flags: [],
+          },
         ]);
       }
     } catch (err) {
@@ -264,7 +306,12 @@ export default function InterviewCoachSessionPage() {
             )}
             {status === "active" ? "Pause" : "Resume"}
           </Button>
-          <Button size="sm" variant="danger" loading={isEnding} onClick={finishSession}>
+          <Button
+            size="sm"
+            variant="danger"
+            loading={isEnding}
+            onClick={finishSession}
+          >
             End Interview
           </Button>
         </div>
@@ -277,7 +324,10 @@ export default function InterviewCoachSessionPage() {
       ) : null}
 
       <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
-        <div ref={scrollRef} className="flex max-h-[55vh] flex-col gap-4 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          className="flex max-h-[55vh] flex-col gap-4 overflow-y-auto"
+        >
           {turns.map((turn, i) => (
             <div key={i} className="flex flex-col gap-2">
               <div className="flex max-w-[88%] items-start gap-2">
@@ -311,7 +361,9 @@ export default function InterviewCoachSessionPage() {
         {error ? <p className="text-sm text-danger">{error}</p> : null}
 
         {status === "paused" ? (
-          <p className="text-sm text-warning">Session paused — click Resume to continue.</p>
+          <p className="text-sm text-warning">
+            Session paused — click Resume to continue.
+          </p>
         ) : (
           <div className="flex items-center gap-2 border-t border-border pt-4">
             <input
@@ -332,7 +384,12 @@ export default function InterviewCoachSessionPage() {
               placeholder="Type your answer..."
               className="h-11 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
             />
-            <Button size="md" loading={isSubmitting} disabled={!answer.trim()} onClick={handleSubmitAnswer}>
+            <Button
+              size="md"
+              loading={isSubmitting}
+              disabled={!answer.trim()}
+              onClick={handleSubmitAnswer}
+            >
               Send
             </Button>
             {isVoiceActive ? (
@@ -360,7 +417,11 @@ export default function InterviewCoachSessionPage() {
           </div>
         )}
         {voiceStatus ? (
-          <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+          <p
+            role="status"
+            aria-live="polite"
+            className="text-sm text-muted-foreground"
+          >
             {voiceStatus}
           </p>
         ) : null}
@@ -369,12 +430,20 @@ export default function InterviewCoachSessionPage() {
   );
 }
 
-function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: SessionFeedback }) {
+function ResultsView({
+  sessionId,
+  feedback,
+}: {
+  sessionId: string;
+  feedback: SessionFeedback;
+}) {
   const router = useRouter();
   const [shareOpen, setShareOpen] = React.useState(false);
   const [recipient, setRecipient] = React.useState("");
   const [note, setNote] = React.useState("");
-  const [accessLevel, setAccessLevel] = React.useState<"transcript_only" | "full">("transcript_only");
+  const [accessLevel, setAccessLevel] = React.useState<
+    "transcript_only" | "full"
+  >("transcript_only");
   const [contentConfirmed, setContentConfirmed] = React.useState(false);
   const [isSharing, setIsSharing] = React.useState(false);
   const [shareLink, setShareLink] = React.useState<string | null>(null);
@@ -393,12 +462,15 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
         recipient_email_or_id: recipient.trim(),
         note: note.trim() || undefined,
         access_level: accessLevel,
-        content_confirmed: accessLevel === "full" ? contentConfirmed : undefined,
+        content_confirmed:
+          accessLevel === "full" ? contentConfirmed : undefined,
       });
       const fullUrl = `${window.location.origin}/dashboard/interview-coach/reviews/${result.share_id}`;
       setShareLink(fullUrl);
     } catch (err) {
-      setShareError(err instanceof ApiError ? err.message : "Something went wrong.");
+      setShareError(
+        err instanceof ApiError ? err.message : "Something went wrong.",
+      );
     } finally {
       setIsSharing(false);
     }
@@ -408,8 +480,12 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
-        <h1 className="mt-3 font-serif text-h2 font-semibold">Overall Score: {feedback.overall_score}</h1>
-        <p className="mt-2 text-sm text-primary-foreground/85">{feedback.closing_message}</p>
+        <h1 className="mt-3 font-serif text-h2 font-semibold">
+          Overall Score: {feedback.overall_score}
+        </h1>
+        <p className="mt-2 text-sm text-primary-foreground/85">
+          {feedback.closing_message}
+        </p>
       </div>
 
       {feedback.round_scorecards.map((card, i) => (
@@ -423,9 +499,16 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
           </h2>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {Object.entries(card.scores).map(([key, value]) => (
-              <div key={key} className="rounded-xl border border-border bg-surface p-3">
-                <p className="text-xs font-medium capitalize text-muted-foreground">{key.replace(/_/g, " ")}</p>
-                <p className="mt-1 text-lg font-semibold text-foreground">{Math.round(value)}</p>
+              <div
+                key={key}
+                className="rounded-xl border border-border bg-surface p-3"
+              >
+                <p className="text-xs font-medium capitalize text-muted-foreground">
+                  {key.replace(/_/g, " ")}
+                </p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {Math.round(value)}
+                </p>
               </div>
             ))}
           </div>
@@ -434,19 +517,29 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
       ))}
 
       <div className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
-        <h2 className="font-serif text-lg font-semibold text-foreground">Actionable Script</h2>
-        <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{feedback.actionable_script}</p>
+        <h2 className="font-serif text-lg font-semibold text-foreground">
+          Actionable Script
+        </h2>
+        <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+          {feedback.actionable_script}
+        </p>
       </div>
 
       {/* PSC-US-08: Filler word breakdown & timeline, same scorecard as Public Speaking */}
-      <FillerWordsScorecardSection sessionId={sessionId} fetchFn={getInterviewCoachFillerWords} />
+      <FillerWordsScorecardSection
+        sessionId={sessionId}
+        fetchFn={getInterviewCoachFillerWords}
+      />
 
       <div className="flex flex-wrap items-center justify-center gap-3">
         <Button size="lg" variant="outline" onClick={() => setShareOpen(true)}>
           <Share2 className="h-4 w-4" aria-hidden="true" />
           Share for Peer Review
         </Button>
-        <Button size="lg" onClick={() => router.push("/dashboard/interview-coach")}>
+        <Button
+          size="lg"
+          onClick={() => router.push("/dashboard/interview-coach")}
+        >
           Start Another Interview
         </Button>
       </div>
@@ -506,7 +599,9 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
                       : "bg-surface text-muted-foreground hover:bg-muted",
                   )}
                 >
-                  {level === "transcript_only" ? "Transcript only" : "Full (audio/video)"}
+                  {level === "transcript_only"
+                    ? "Transcript only"
+                    : "Full (audio/video)"}
                 </button>
               ))}
             </div>
@@ -517,7 +612,9 @@ function ResultsView({ sessionId, feedback }: { sessionId: string; feedback: Ses
                 label="I've reviewed the content and confirm it's OK to share in full."
               />
             ) : null}
-            {shareError ? <p className="text-sm text-danger">{shareError}</p> : null}
+            {shareError ? (
+              <p className="text-sm text-danger">{shareError}</p>
+            ) : null}
             <Button loading={isSharing} onClick={handleShare}>
               Create Share Link
             </Button>

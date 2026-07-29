@@ -98,20 +98,11 @@ CLIPPING_DB = -3.0
 
 
 class _AgentProsody:
-    """Minimal stand-in for prosody_engine.ProsodyData carrying only the field the
-    scorecard reads (pitch range), populated from the LiveKit full-mode features."""
-
     def __init__(self, pitch_range_semitones: float):
         self.pitch_range_semitones = pitch_range_semitones
 
 
 class _AgentAnalysis:
-    """Adapter that lets the scorecard treat LiveKit full-mode features like a
-    recording_engine.RecordingAnalysis (same attributes it reads: prosody / avg_dbfs /
-    snr_db / rejection). The voice_agent trims silence before it ever sees the audio, so a
-    true noise-floor SNR isn't available — clarity therefore assumes a clean channel unless
-    the agent later sends snr_db."""
-
     def __init__(self, features: Dict):
         self.prosody = _AgentProsody(float(features.get("pitch_range_semitones", 0.0)))
         self.avg_dbfs = float(features.get("avg_db", -20.0))
@@ -124,10 +115,17 @@ async def start_session(
     request: StartPublicSpeakingSchema,
 ) -> Dict:
     """Start a new public speaking session"""
+    # A fresh start supersedes any other open Public Speaking session this user
+    # has running — mirrors pronunciation_coach_service._start_session's guard.
+    await db.publicspeakingsession.update_many(
+        where={"userId": user_id, "status": {"in": ["in_progress", "qa_phase"]}},
+        data={"status": "abandoned"},
+    )
+
     session_id = str(uuid.uuid4())
-    
+
     speech_config = SPEECH_TYPES.get(request.speech_type, SPEECH_TYPES["business_pitch"])
-    
+
     # Create session record
     session = await db.publicspeakingsession.create(
         data={
@@ -153,28 +151,41 @@ async def start_session(
     }
 
 
+async def find_resumable_session(user_id: str) -> Dict:
+    """Mirrors pronunciation_coach_service._find_resumable_session's shape —
+    used by the Public Speaking landing page to offer Resume before showing the
+    normal speech-type picker."""
+    row = await db.publicspeakingsession.find_first(
+        where={"userId": user_id, "status": {"in": ["in_progress", "qa_phase"]}},
+        order={"createdAt": "desc"},
+    )
+    # Engagement gate: "in_progress" with no transcript yet means the learner landed
+    # on the page and hasn't actually delivered anything — reaching "qa_phase" (or
+    # having a transcript at all) is the real signal something's worth resuming.
+    if not row or (row.status == "in_progress" and row.transcript is None):
+        return {"found": False}
+    speech_config = SPEECH_TYPES.get(row.speechType, SPEECH_TYPES["business_pitch"])
+    return {
+        "found": True, "session_id": row.id, "speech_type": row.speechType,
+        "label": speech_config["label"], "started_at": row.createdAt.isoformat(),
+    }
+
+
 async def submit_turn(
     session_id: str,
     user_id: str,
     turn: PublicSpeakingTurnSchema,
 ) -> Dict:
-    """Process a speech turn (audio or text) and return analysis"""
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
         raise SessionNotFoundError("Public speaking session not found")
     
     speech_config = SPEECH_TYPES.get(session.speechType, SPEECH_TYPES["business_pitch"])
     
-    # Process audio or text input
     if turn.audio_data:
-        # Legacy base64-upload pipeline (full prosody/SNR delivery metrics).
         transcript, audio_features, analysis = await _process_audio(turn.audio_data)
         text_content = transcript
     elif turn.audio_features or turn.duration_seconds is not None:
-        # Shared LiveKit voice pipeline. In FULL mode the voice_agent also sends acoustic
-        # features (word timings + prosody + level), so we recover real WPM/tone/clarity —
-        # matching the base64 recording_engine path. In transcript mode only duration
-        # arrives, so tone/clarity fall back to proxies (like Conversation / Baseline).
         text_content = turn.text_content or ""
         feats = turn.audio_features or {}
         dur = turn.duration_seconds if turn.duration_seconds is not None else feats.get("duration_seconds", 0.0)
@@ -186,12 +197,10 @@ async def submit_turn(
         )
         analysis = _AgentAnalysis(feats) if feats.get("pitch_range_semitones") is not None else None
     else:
-        # Typed text
         text_content = turn.text_content or ""
         audio_features = None
         analysis = None
 
-    # Generate comprehensive scorecard
     scorecard = await _generate_scorecard(
         speech_type=str(session.speechType),
         text_content=text_content,
@@ -200,27 +209,29 @@ async def submit_turn(
         speech_config=speech_config,
     )
     
-    # Update session
+    # Update session — audioFeatures is optional (Json?). Skip the key entirely when
+    # there's no audio instead of sending None, which prisma-client-py can't serialize.
+    update_data = {
+        "transcript": text_content,
+        "status": "completed" if turn.is_final else "in_progress",
+        "completedAt": datetime.now(timezone.utc) if turn.is_final else None,
+        "scorecard": Json(scorecard),
+    }
+    if audio_features:
+        update_data["audioFeatures"] = Json(asdict(audio_features))
+
     await db.publicspeakingsession.update(
         where={"id": session_id},
-        data={
-            "transcript": text_content,
-            "status": "completed" if turn.is_final else "in_progress",
-            "completedAt": datetime.now(timezone.utc) if turn.is_final else None,
-            "scorecard": Json(scorecard),
-            "audioFeatures": _audio_features_json(audio_features),
-        }
+        data=update_data,
     )
     
-    # Check if Q&A should be triggered (PSC-US-12)
     should_trigger_qa = (
         turn.is_final and 
-        len(text_content) > 100 and  # Minimum content for meaningful Q&A
+        len(text_content) > 100 and
         not _is_nonsense_content(text_content)
     )
     
     if should_trigger_qa:
-        # Generate AI question based on speech content
         ai_question = await _generate_qa_question(session.speechType, text_content)
         await db.publicspeakingsession.update(
             where={"id": session_id},
@@ -248,7 +259,6 @@ async def submit_qa_response(
     user_id: str,
     response: QAResponseSchema,
 ) -> Dict:
-    """Process Q&A response and evaluate performance"""
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
         raise SessionNotFoundError("Public speaking session not found")
@@ -256,7 +266,6 @@ async def submit_qa_response(
     if session.status != "qa_phase":
         raise InvalidSubmissionError("This session is not in the Q&A phase.")
     
-    # Process response
     if response.audio_data:
         transcript, audio_features, _analysis = await _process_audio(response.audio_data)
         text_content = transcript
@@ -267,7 +276,6 @@ async def submit_qa_response(
         text_content = response.text_content or ""
         audio_features = None
     
-    # Evaluate Q&A performance
     qa_score = await _evaluate_qa_response(
         original_speech=session.transcript or "",
         ai_question=session.aiQuestion or "",
@@ -275,7 +283,6 @@ async def submit_qa_response(
         audio_features=audio_features,
     )
     
-    # Update session with Q&A results
     await db.publicspeakingsession.update(
         where={"id": session_id},
         data={
@@ -286,7 +293,6 @@ async def submit_qa_response(
         }
     )
     
-    # Merge Q&A score into existing scorecard
     updated_scorecard = session.scorecard or {}
     updated_scorecard["qa_handling"] = qa_score
     
@@ -298,10 +304,6 @@ async def submit_qa_response(
 
 
 async def get_voice_token(session_id: str, user_id: str) -> Dict:
-    """Mint a LiveKit room token for a spoken turn — the shared voice pipeline used by
-    Conversation / Baseline. Room name is the session_id; the generic voice_agent worker
-    auto-joins, transcribes (Silero VAD + faster-whisper), and pushes the transcript over
-    the data channel. Backend never touches raw audio here."""
     from fastapi.responses import JSONResponse
     from lib import livekit_tokens
 
@@ -313,12 +315,10 @@ async def get_voice_token(session_id: str, user_id: str) -> Dict:
             status_code=503,
             content={"error": "Voice mode unavailable. Use text mode instead."},
         )
-    # Public Speaking needs delivery metrics -> full mode (word timings + prosody + level).
     return livekit_tokens.mint_room_token(session_id, identity=user_id, mode="full")
 
 
 async def get_session(session_id: str, user_id: str) -> Dict:
-    """Get session details"""
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
         raise SessionNotFoundError("Public speaking session not found")
@@ -339,33 +339,53 @@ async def get_session(session_id: str, user_id: str) -> Dict:
     }
 
 
+async def get_filler_words_for_session(session_id: str, user_id: str) -> Dict:
+    """Return filler word breakdown + timeline for a session (PSC-US-08). Rebuilds the
+    analysis from the stored transcript + audioFeatures (real word timings when audio was
+    used) instead of requiring a separate stored copy."""
+    session = await db.publicspeakingsession.find_unique(where={"id": session_id})
+    if not session or session.userId != user_id:
+        raise SessionNotFoundError("Public speaking session not found")
+
+    transcript = session.transcript or ""
+    stored_features = session.audioFeatures if isinstance(session.audioFeatures, dict) else None
+
+    analysis = filler_word_service.analyze_filler_words(transcript, audio_features=stored_features)
+
+    return {
+        "total_filler_count": analysis.total_filler_count,
+        "flawless_delivery": analysis.flawless_delivery,
+        "badge": analysis.badge,
+        "analysis_summary": getattr(analysis, "analysis_summary", None),
+        "actionable_tip": analysis.actionable_tip,
+        "timeline_markers": [
+            {
+                "word": m.word,
+                "position": m.position,
+                "start_time": m.start_time,
+                "end_time": m.end_time,
+            }
+            for m in analysis.timeline_markers
+        ],
+        "filler_counts": [
+            {"word": word, "count": count}
+            for word, count in (analysis.filler_frequencies or {}).items()
+        ],
+    }
+
+
 def _audio_features_json(audio_features: Optional[AudioFeatures]):
-    """Serializes AudioFeatures (incl. real per-word timings) for the audioFeatures
-    Json column, so get_filler_words_for_session can read real timestamps back out
-    instead of falling back to synthetic evenly-spaced ones."""
     return Json(asdict(audio_features)) if audio_features else None
 
 
 async def _process_audio(
     audio_data: str,
 ) -> Tuple[str, Optional[AudioFeatures], Optional["recording_engine.RecordingAnalysis"]]:
-    """Process audio input: decode base64, then run it through the same shared
-    decode+VAD+STT+prosody pipeline Pronunciation Coach / Accent Assessment use
-    (lib/recording_engine.py) instead of duplicating that logic here.
-
-    Returns the transcript, a fully populated session_scorer.AudioFeatures (with word
-    timings + filled-pause count, so the real fluency scorer works — not the empty stub
-    Devin passed before), and the raw RecordingAnalysis so the scorecard can read real
-    prosody / SNR / rejection instead of hardcoded 75s."""
     try:
-        # Frontend sends either a raw base64 string or a data: URI — strip the prefix if present.
         raw = audio_data.split(",", 1)[1] if audio_data.startswith("data:") else audio_data
         audio_bytes = base64.b64decode(raw)
         config = load_speech_config()
         analysis = recording_engine.analyze_recording(audio_bytes, config)
-        # PSC-US-08: keep real per-word STT timestamps + confidence so the filler-word
-        # service lands "Um: 12 times" markers on the actual moment each was spoken,
-        # instead of synthetic evenly-spaced fallbacks.
         word_timings = [
             {"word": w.word, "start": w.start, "end": w.end, "confidence": w.probability}
             for w in analysis.words
@@ -390,37 +410,17 @@ async def _generate_scorecard(
     analysis: Optional["recording_engine.RecordingAnalysis"],
     speech_config: Dict,
 ) -> Dict:
-    """Generate comprehensive scorecard based on speech analysis.
-
-    Scores are derived from the shared analysis engines — session_scorer for
-    fluency/vocabulary/pronunciation, prosody for tone variation, VAD/SNR for clarity —
-    not from the constant 75.0 placeholders. When audio was rejected (silence, too
-    quiet, too noisy) the scorecard reports that instead of fabricating a score."""
-
-    # Run the same fluency/vocabulary/pronunciation scorer the other speaking modules use.
     if audio_features:
         scored = session_scorer.score_audio_session(audio_features)
     else:
         scored = session_scorer.score_text_session(text_content)
 
-    # Calculate speaking pace (PSC-US-11)
     wpm_metrics = _calculate_wpm(text_content, audio_features)
-
-    # Analyze filler words (PSC-US-08)
-    # PSC-US-08: pass audio_features so filler markers use real per-word timestamps.
     filler_analysis = _analyze_filler_words(text_content, audio_features)
-
-    # Assess tone variation and energy (PSC-US-05, PSC-US-07) — real pitch range when audio present.
     tone_analysis = _analyze_tone_variation(text_content, analysis)
-
-
-    # Evaluate structure based on speech type
     structure_analysis = _evaluate_structure(speech_type, text_content, speech_config)
-
-    # Voice clarity analysis (PSC-US-14) — real SNR / input level, not a constant.
     clarity_analysis = _analyze_voice_clarity(analysis)
 
-    # Calculate overall scores
     scores = _calculate_overall_scores(
         speech_type=speech_type,
         wpm_metrics=wpm_metrics,
@@ -432,7 +432,6 @@ async def _generate_scorecard(
         speech_config=speech_config,
     )
 
-    # Generate feedback and flags
     flags = _generate_flags(
         speech_type=speech_type,
         wpm_metrics=wpm_metrics,
@@ -448,7 +447,6 @@ async def _generate_scorecard(
         tone_analysis=tone_analysis,
     )
 
-    # Generate summary and actionable tips
     summary, actionable_tips = _generate_feedback_summary(
         speech_type=speech_type,
         scores=scores,
@@ -482,13 +480,9 @@ async def _generate_scorecard(
 
 
 def _calculate_wpm(text: str, audio_features: Optional[AudioFeatures]) -> Dict:
-    """Calculate words per minute and pacing metrics"""
     words = text.split()
     word_count = len(words)
 
-    # WPM needs real speaking time. Text submissions have none, so report it as
-    # unmeasurable ("not_applicable") rather than inventing 150 — the old default made
-    # every typed speech read as perfectly paced.
     if audio_features and audio_features.duration_seconds > 0:
         wpm = round((word_count / audio_features.duration_seconds) * 60, 1)
     else:
@@ -515,7 +509,6 @@ def _calculate_wpm(text: str, audio_features: Optional[AudioFeatures]) -> Dict:
 from services import filler_word_service
 
 def _analyze_filler_words(text: str, audio_features: Optional[AudioFeatures] = None) -> Dict:
-    """Analyze filler word usage using filler_word_service (PSC-US-08)"""
     af_dict = None
     if audio_features:
         af_dict = {
@@ -549,24 +542,12 @@ def _analyze_filler_words(text: str, audio_features: Optional[AudioFeatures] = N
 def _analyze_tone_variation(
     text: str, analysis: Optional["recording_engine.RecordingAnalysis"]
 ) -> Dict:
-    """Analyze tone variation and vocal energy.
-
-    For audio, the real signal is pitch range: the prosody engine already computes
-    pitch_range_semitones (5th–95th percentile spread of the voiced F0 contour). A flat
-    delivery sits near 0; expressive speech spans ~8-12 st. That replaces the constant
-    75.0 the old code produced because it called prosody_engine.analyze() with the wrong
-    argument and swallowed the resulting exception.
-
-    For text (no audio), fall back to the sentence-length-variance heuristic — it's a
-    weak proxy, so it only flags monotone risk, it does not fabricate an energy number.
-    """
     sentences = [s.strip() for s in text.split('.') if s.strip()]
 
     if analysis is not None and analysis.prosody is not None:
         pitch_range = float(analysis.prosody.pitch_range_semitones)
-        # Map 0 st -> 0, 10 st -> 100 (clamped). 10 st ≈ lively presentation delivery.
         energy_score = max(0.0, min(100.0, (pitch_range / 10.0) * 100.0))
-        monotone_risk = pitch_range < 3.0  # under a minor third of spread reads as flat
+        monotone_risk = pitch_range < 3.0
         energy_measured = True
     else:
         sentence_lengths = [len(s.split()) for s in sentences]
@@ -575,7 +556,7 @@ def _analyze_tone_variation(
             monotone_risk = length_variance < 5
         else:
             monotone_risk = False
-        energy_score = None  # not measurable from text
+        energy_score = None
         energy_measured = False
 
     return {
@@ -587,13 +568,11 @@ def _analyze_tone_variation(
 
 
 def _evaluate_structure(speech_type: str, text: str, speech_config: Dict) -> Dict:
-    """Evaluate speech structure based on type"""
     structure_elements = speech_config["structure_elements"]
     found_elements = []
     
     text_lower = text.lower()
     
-    # Define keyword patterns for each structure element
     element_patterns = {
         "hook": [r"imagine", r"picture this", r"let me tell you", r"have you ever"],
         "problem": [r"problem", r"challenge", r"issue", r"struggle", r"pain point"],
@@ -628,13 +607,6 @@ def _evaluate_structure(speech_type: str, text: str, speech_config: Dict) -> Dic
 def _analyze_voice_clarity(
     analysis: Optional["recording_engine.RecordingAnalysis"],
 ) -> Dict:
-    """Analyze voice clarity and projection (PSC-US-14) from real acoustic signals.
-
-    Clarity tracks SNR (how far the voice sits above the noise floor); projection tracks
-    average input level (dBFS). Both come straight from the VAD/level analysis the shared
-    recording engine already ran. Text mode has no audio, so clarity is reported as
-    not-measured (None) rather than a placeholder 75.0.
-    """
     if analysis is None:
         return {
             "clarity_score": None,
@@ -645,7 +617,6 @@ def _analyze_voice_clarity(
 
     issues = []
 
-    # If the whole recording was rejected, surface why — don't score fake clarity on it.
     if analysis.rejection is not None:
         reason_messages = {
             "no_speech_detected": "No speech was detected. Please record again and speak clearly.",
@@ -665,11 +636,9 @@ def _analyze_voice_clarity(
             "issues": issues,
         }
 
-    # Clarity from SNR: <=8 dB poor (~50), >=25 dB excellent (~100).
     snr = analysis.snr_db
     clarity_score = max(0.0, min(100.0, 50.0 + (snr - 8.0) * (50.0 / 17.0)))
 
-    # Projection from input level: too quiet or clipping both hurt.
     avg_db = analysis.avg_dbfs
     projection_score = max(0.0, min(100.0, (avg_db - MIC_QUIET_DB) * (100.0 / 42.0)))
     if avg_db <= MIC_QUIET_DB:
@@ -677,7 +646,7 @@ def _analyze_voice_clarity(
             "type": "microphone_quiet",
             "message": "Microphone volume is very low. Please check device settings.",
         })
-        projection_score = 50.0  # hardware issue — don't over-penalize the speaker
+        projection_score = 50.0
     elif avg_db >= CLIPPING_DB:
         issues.append({
             "type": "audio_clipping",
@@ -703,16 +672,8 @@ def _calculate_overall_scores(
     scored: "session_scorer.ScoredSession",
     speech_config: Dict,
 ) -> Dict:
-    """Calculate overall scores based on all analyses.
-
-    Where a dimension can't be measured (text has no pacing/clarity/energy), we fall back
-    to the session_scorer fluency score — a real signal derived from the submission —
-    instead of the old constant 75.0 placeholders.
-    """
     fluency = scored.fluency_score
 
-    # Base scores. Text submissions have no measurable pace, so pacing tracks written
-    # fluency rather than an invented "optimal 100".
     if wpm_metrics["pacing_quality"] == "not_applicable":
         pacing_score = fluency
     elif wpm_metrics["pacing_quality"] == "rushed":
@@ -722,10 +683,8 @@ def _calculate_overall_scores(
     else:
         pacing_score = 100.0
 
-    # Penalize excessive filler words
-    filler_penalty = min(filler_analysis["count"] * 2, 30)  # Max 30 point penalty
+    filler_penalty = min(filler_analysis["count"] * 2, 30)
 
-    # Tone variation score — real pitch spread when audio, else fluency proxy.
     tone_score = tone_analysis["energy_score"]
     if tone_score is None:
         tone_score = fluency
@@ -733,45 +692,35 @@ def _calculate_overall_scores(
         tone_score -= 20
     tone_score = max(0.0, min(100.0, tone_score))
 
-    # Structure score
     structure_score = structure_analysis["structure_score"]
 
-    # Clarity score — real SNR when audio, else fluency proxy.
     clarity_score = clarity_analysis["clarity_score"]
     if clarity_score is None:
         clarity_score = fluency
 
-    # Calculate overall based on speech type priorities
     if speech_config.get("prioritize_energy"):
-        # Motivational: prioritize tone and energy
         overall = (0.35 * tone_score + 0.25 * structure_score + 
                    0.2 * pacing_score + 0.1 * clarity_score + 
                    0.1 * (100 - filler_penalty))
     elif speech_config.get("prioritize_storytelling"):
-        # TED-style: prioritize structure and engagement
         overall = (0.3 * structure_score + 0.25 * tone_score + 
                    0.2 * pacing_score + 0.15 * clarity_score + 
                    0.1 * (100 - filler_penalty))
     elif speech_config.get("prioritize_structure"):
-        # Business pitch: prioritize structure and persuasiveness
         overall = (0.35 * structure_score + 0.2 * pacing_score + 
                    0.2 * tone_score + 0.15 * clarity_score + 
                    0.1 * (100 - filler_penalty))
     elif speech_config.get("disable_corporate_tone"):
-        # Casual event: prioritize warmth, lower structure weight
         overall = (0.3 * tone_score + 0.2 * structure_score + 
                    0.2 * pacing_score + 0.2 * clarity_score + 
                    0.1 * (100 - filler_penalty))
     else:
-        # Default balanced scoring
         overall = (0.25 * structure_score + 0.25 * pacing_score + 
                    0.2 * tone_score + 0.15 * clarity_score + 
                    0.15 * (100 - filler_penalty))
     
-    # Audience engagement derived from tone and structure
     audience_engagement = (tone_score + structure_score) / 2
     
-    # Confidence score (overall adjusted for major issues)
     confidence = overall
     if clarity_analysis["issues"]:
         confidence -= 10
@@ -795,10 +744,8 @@ def _generate_flags(
     structure_analysis: Dict,
     clarity_analysis: Dict,
 ) -> List[Dict]:
-    """Generate flags for issues and suggestions"""
     flags = []
     
-    # Pacing flags
     if wpm_metrics["pacing_quality"] == "rushed":
         flags.append({
             "type": "rushed_pacing",
@@ -812,7 +759,6 @@ def _generate_flags(
             "suggestion": "Increase energy and pace slightly to maintain attention.",
         })
     
-    # Filler word flags
     if filler_analysis["count"] > 10:
         flags.append({
             "type": "excessive_filler_words",
@@ -820,7 +766,6 @@ def _generate_flags(
             "suggestion": "Practice pausing silently instead of using 'um' or 'ah'.",
         })
     
-    # Tone flags
     if tone_analysis["monotone_risk"]:
         flags.append({
             "type": "monotone_delivery",
@@ -828,7 +773,6 @@ def _generate_flags(
             "suggestion": "Vary your pitch and volume, especially on emotional words.",
         })
     
-    # Structure flags
     for missing in structure_analysis["missing_elements"]:
         flags.append({
             "type": "missing_structure_element",
@@ -836,7 +780,6 @@ def _generate_flags(
             "suggestion": f"Add a clear {missing} section to improve structure.",
         })
     
-    # Clarity flags
     for issue in clarity_analysis["issues"]:
         flags.append(issue)
     
@@ -848,7 +791,6 @@ def _generate_highlights(
     structure_analysis: Dict,
     tone_analysis: Dict,
 ) -> List[Dict]:
-    """Generate positive highlights"""
     highlights = []
     
     for element in structure_analysis["found_elements"]:
@@ -872,9 +814,6 @@ def _generate_feedback_summary(
     flags: List[Dict],
     speech_config: Dict,
 ) -> Tuple[str, List[str]]:
-    """Generate overall summary and actionable tips"""
-    
-    # Generate summary based on overall score
     overall = scores["overall"]
     if overall >= 85:
         summary = "Excellent delivery! Your speech demonstrates strong structure and engaging delivery."
@@ -885,13 +824,11 @@ def _generate_feedback_summary(
     else:
         summary = "This speech needs significant revision. Focus on fundamentals: clear structure, appropriate pacing, and vocal variety."
     
-    # Generate actionable tips from flags
     tips = []
     for flag in flags:
         if flag.get("suggestion"):
             tips.append(flag["suggestion"])
     
-    # Add speech-type specific tips
     if speech_config.get("prioritize_energy"):
         tips.append("For motivational speeches: practice varying your volume and pause for dramatic effect.")
     elif speech_config.get("prioritize_storytelling"):
@@ -899,16 +836,14 @@ def _generate_feedback_summary(
     elif speech_config.get("disable_corporate_tone"):
         tips.append("For casual events: prioritize warmth and authenticity over formal structure.")
     
-    return summary, tips[:5]  # Limit to top 5 tips
+    return summary, tips[:5]
 
 
 def _is_nonsense_content(text: str) -> bool:
-    """Check if content is too minimal/nonsense for Q&A (PSC-US-12 E-01)"""
     words = text.split()
     if len(words) < 20:
         return True
     
-    # Check for repetitive patterns
     unique_words = set(word.lower() for word in words)
     if len(unique_words) < 5:
         return True
@@ -917,9 +852,7 @@ def _is_nonsense_content(text: str) -> bool:
 
 
 async def _generate_qa_question(speech_type: str, transcript: str) -> str:
-    """Generate relevant Q&A question based on speech content (PSC-US-12)"""
     if not llm_client.is_configured():
-        # Fallback questions
         fallback_questions = {
             "BUSINESS_PITCH": "What makes your solution unique compared to competitors?",
             "CLASSROOM": "Can you elaborate on your main supporting argument?",
@@ -953,9 +886,6 @@ async def _evaluate_qa_response(
     user_response: str,
     audio_features: Optional[AudioFeatures],
 ) -> Dict:
-    """Evaluate Q&A response performance (PSC-US-12)"""
-    
-    # Check for silence/freezing (PSC-US-12 E-02)
     if len(user_response.strip()) < 10:
         return {
             "composure": 30.0,
@@ -963,7 +893,6 @@ async def _evaluate_qa_response(
             "feedback": "You froze when asked the question. Practice buying time with phrases like 'That's a great question, let me think about that...'",
         }
     
-    # Check for aggressive/defensive tone (PSC-US-12 E-03)
     aggressive_indicators = ["wrong", "stupid", "ridiculous", "don't agree", "incorrect"]
     if any(indicator in user_response.lower() for indicator in aggressive_indicators):
         return {
@@ -972,7 +901,6 @@ async def _evaluate_qa_response(
             "feedback": "Your response sounded defensive. Accept audience questions gracefully, even if you disagree.",
         }
     
-    # Use LLM for detailed evaluation if available
     if llm_client.is_configured():
         prompt = f"""Evaluate this Q&A response:
 
@@ -1002,10 +930,9 @@ Return JSON with keys: composure, relevance, feedback"""
         except Exception as e:
             logger.error(f"Q&A evaluation failed: {e}")
     
-    # Fallback heuristic evaluation
     words = user_response.split()
-    composure = min(100.0, 50.0 + len(words) * 2)  # Longer responses suggest more composure
-    relevance = 75.0  # Default assumption
+    composure = min(100.0, 50.0 + len(words) * 2)
+    relevance = 75.0
     
     return {
         "composure": round(composure, 1),

@@ -14,6 +14,8 @@ from services.public_speaking_service import (
     submit_qa_response,
     get_session,
     get_voice_token,
+    get_filler_words_for_session,
+    find_resumable_session,
 )
 
 router = APIRouter()
@@ -27,6 +29,14 @@ async def api_start_session(
 ):
     """Start a new public speaking session"""
     return await start_session(user_id, request)
+
+
+# Registered before "/{session_id}" so "resume" doesn't get swallowed by that path param.
+@router.get("/resume")
+async def api_find_resumable_session(user_id: str = Depends(require_auth)):
+    """Find the user's latest unfinished session, if any (mirrors the pronunciation
+    coach's GET /resume) — the landing page checks this before offering a fresh start."""
+    return await find_resumable_session(user_id)
 
 
 @router.post("/{session_id}/turn")
@@ -74,4 +84,3 @@ async def api_get_filler_words(
 ):
     """Get filler word breakdown and timeline markers for session (PSC-US-08)"""
     return await get_filler_words_for_session(session_id, user_id)
-

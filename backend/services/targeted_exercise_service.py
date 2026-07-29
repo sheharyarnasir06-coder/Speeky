@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 DRILL_STREAK_NS = "targeted_drill_phoneme_streak"
 DRILL_SESSION_NS = "targeted_drill_sessions"
+DRILL_SENTENCE_NS = "targeted_drill_sentences"
 MAX_CONSECUTIVE_FAILURES = 5
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 
@@ -136,6 +137,10 @@ async def get_targeted_drills(user_id: str = Depends(require_auth)) -> Dict:
         exercise_text = exercises[i] if i < len(exercises) else f"Practice the sound: {phoneme}"
         drill_id = f"drill_{uuid.uuid4().hex[:12]}"
 
+        # FIX: persist this drill's actual sentence so submit_targeted_drill_attempt
+        # can align against real drill text instead of the phoneme label.
+        await kv_store.store.create(DRILL_SENTENCE_NS, drill_id, {"sentence": exercise_text})
+
         # Check phoneme failure streak (E-02)
         streak = await _get_streak(user_id, phoneme)
         is_paused = streak >= MAX_CONSECUTIVE_FAILURES
@@ -205,50 +210,52 @@ async def submit_targeted_drill_attempt(
         user_id=user_id, item_id=drill_id, prompt_token=prompt_token
     )
     if not token_valid:
-        playback_info = await liveness_service.record_liveness_flag(
-            user_id=user_id,
-            item_id=drill_id,
-            prompt_token=prompt_token,
-            reason="invalid_or_stale_token",
-        )
         return JSONResponse(
             status_code=422,
             content=RecordingRejectedSchema(
                 reason="stale_token",
                 message="Session token is invalid or has already been used. Please fetch a fresh drill.",
-                appeal_token=playback_info.get("appeal_token"),
-                appeal_prompt=playback_info.get("appeal_prompt"),
             ).model_dump(),
         )
 
     # Playback detection (ACC-US-01)
     playback_reason = recording_engine.detect_playback_audio(analysis, config)
     if playback_reason:
-        flag_info = await liveness_service.record_liveness_flag(
-            user_id=user_id,
-            item_id=drill_id,
-            prompt_token=prompt_token,
-            reason=playback_reason.value,
-        )
         return JSONResponse(
             status_code=422,
             content=RecordingRejectedSchema(
                 reason=playback_reason.value,
                 message="Detected playback audio. Live speech required for targeted drill scoring.",
-                appeal_token=flag_info.get("appeal_token"),
-                appeal_prompt=flag_info.get("appeal_prompt"),
             ).model_dump(),
         )
 
     # Accent calibration (ACC-US-11 + ACC-US-09 sub-dialect)
     user_pref, sub_pref, _ = await accent_calibration_service.get_user_accent_preference(user_id)
 
-    # Compute pronunciation score for this drill
-    aligned_words = recording_engine.align_to_sentence(analysis, target_phoneme)
-    from schemas.pronunciation_schemas import WordResultSchema
-    from services.pronunciation_coach_service import _classify_word  # reuse existing classifier
+    # FIX: align against the drill's actual sentence, not the phoneme label
+    # (target_phoneme is e.g. "word-final stress" — aligning to that always scored 0%
+    # no matter what was said). Fall back to target_phoneme only if lookup fails.
+    sentence_entry = await kv_store.store.get(DRILL_SENTENCE_NS, drill_id)
+    target_sentence = sentence_entry["sentence"] if sentence_entry else target_phoneme
 
-    word_results = [_classify_word(a, analysis.words, analysis.prosody, config) for a in aligned_words]
+    # Compute pronunciation score for this drill
+    aligned_words = recording_engine.align_to_sentence(analysis, target_sentence)
+    from schemas.pronunciation_schemas import WordResultSchema
+
+    # FIX: services.pronunciation_coach_service._classify_word does not exist.
+    # Use the same real classifier pronunciation_coach_service.py itself calls
+    # (lib.recording_engine.classify_word_status), applied to each aligned word.
+    word_results = []
+    for a in aligned_words:
+        timing = analysis.words[a.transcript_index] if a.transcript_index is not None else None
+        status = recording_engine.classify_word_status(a.target_word, timing, analysis.prosody, config)
+        word_results.append(WordResultSchema(
+            word=a.target_word,
+            target_index=a.target_index,
+            status=status.value,
+            confidence=round(timing.probability, 3) if timing is not None else None,
+        ))
+
     word_results, calibration_warning, model_used = accent_calibration_service.calibrate_word_results(
         word_results, user_pref, sub_dialect_preference=sub_pref
     )

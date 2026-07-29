@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from services.user_service import (
     delete_account,
     get_accent_preference,
+    get_consent,
     get_learning_goal,
     get_profile,
     list_users,
@@ -10,6 +11,7 @@ from services.user_service import (
     set_learning_goal,
     request_email_change,
     transfer_super_admin,
+    update_consent,
     update_profile,
     update_user_role,
     upload_avatar,
@@ -23,6 +25,8 @@ router = APIRouter()
 router.add_api_route("/me", get_profile, methods=["GET"])
 router.add_api_route("/me", update_profile, methods=["PATCH"])
 router.add_api_route("/me", delete_account, methods=["DELETE"])
+router.add_api_route("/me/consent", get_consent, methods=["GET"])
+router.add_api_route("/me/consent", update_consent, methods=["PATCH"])
 # Learning goal — picked after signup OTP verification (US-08), editable later (US-10)
 router.add_api_route("/me/learning-goal", get_learning_goal, methods=["GET"])
 router.add_api_route("/me/learning-goal", set_learning_goal, methods=["PATCH"])

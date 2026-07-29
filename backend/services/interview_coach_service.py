@@ -17,7 +17,7 @@ from typing import List, Optional
 from fastapi import Depends
 from fastapi.responses import JSONResponse
 
-from lib import ai_client, kv_store, livekit_tokens
+from lib import ai_client, explore_sessions, kv_store, livekit_tokens
 from middlewares.auth_middleware import require_auth
 from schemas.interview_coach_schemas import (
     AIExchange,
@@ -441,6 +441,10 @@ async def _handle_case_study_turn(session: dict, req: AnswerRequest, session_id:
 
 # ── entry service functions ───────────────────────────────────────────────────
 async def _start_session(user_id: str, req: StartSessionRequest) -> SessionStartResponse:
+    # A fresh start supersedes any other open Explore-group session this user has
+    # running elsewhere — see lib/explore_sessions.py.
+    await explore_sessions.supersede_open_explore_sessions(user_id)
+
     session_id = _new_id("sess")
     now = _now()
     rounds = req.rounds or ([req.mode] if req.mode != InterviewMode.MULTI_ROUND else MULTI_ROUND_DEFAULT_ROUNDS)
@@ -678,9 +682,25 @@ async def _report_comment(user_id: str, comment_id: str) -> dict:
     return {"comment_id": comment_id, "hidden": True, "reported_by": user_id}
 
 
+def _session_state_response(session: dict) -> dict:
+    """Read-only session snapshot for resume — no GET-by-id route existed for this
+    feature before (the frontend relied entirely on sessionStorage, which doesn't
+    survive a fresh navigation from the Explore resume banner)."""
+    return {
+        "session_id": session["session_id"], "mode": session["mode"], "status": session["status"],
+        "exchanges": session["exchanges"], "current_round_index": session["current_round_index"],
+        "started_at": session["started_at"].isoformat(),
+    }
+
+
 # ── controllers (auth-gated) ──────────────────────────────────────────────────
 async def start_session(payload: StartSessionRequest, user_id: str = Depends(require_auth)):
     return await _start_session(user_id, payload)
+
+
+async def get_session_state(session_id: str, user_id: str = Depends(require_auth)):
+    session = await _get_session(session_id, user_id)  # raises SessionNotFoundError if missing/not owned
+    return _session_state_response(session)
 
 
 async def submit_answer(session_id: str, payload: AnswerRequest, user_id: str = Depends(require_auth)):

@@ -1,9 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "react-toastify";
-import { CheckCircle2, Mic, MicOff, Sparkles, TriangleAlert } from "lucide-react";
+import {
+  CheckCircle2,
+  Mic,
+  MicOff,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
 import { UserChatAvatar } from "@/components/common/UserChatAvatar";
@@ -13,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
 import {
   getCoachingScenarios,
+  getCoachingSessionState,
   getCoachingVoiceToken,
   sendRoleplayTurn,
   startCoachingSession,
@@ -34,7 +41,11 @@ interface ChatTurn {
 type Step =
   | { name: "loading" }
   | { name: "error"; message: string }
-  | { name: "draft"; session: StartCoachingResult; scenarioMeta: CoachingScenarioMeta }
+  | {
+      name: "draft";
+      session: StartCoachingResult;
+      scenarioMeta: CoachingScenarioMeta;
+    }
   | {
       name: "roleplay";
       session: StartCoachingResult;
@@ -55,20 +66,29 @@ export default function CoachingSessionPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [voiceStatus, setVoiceStatus] = React.useState("");
-  const scrollRef = useAutoScroll(step.name === "roleplay" ? step.turns.length : 0);
+  const scrollRef = useAutoScroll(
+    step.name === "roleplay" ? step.turns.length : 0,
+  );
   const voiceStartedAt = React.useRef<number | null>(null);
-  const { isSupported: isSpeechSupported, isListening, error: speechError, start, stop } =
-    useSpeechRecognition();
+  const {
+    isSupported: isSpeechSupported,
+    isListening,
+    error: speechError,
+    start,
+    stop,
+  } = useSpeechRecognition();
 
   // Voice mode for the roleplay chat turns only (draft submission keeps the browser
   // dictation above — it's a one-shot monologue, not a back-and-forth). Same LiveKit
   // mic-in pattern as Conversation/Scenarios: transcript fills chatInput, never auto-sent.
   const roleplaySessionIdRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (step.name === "roleplay") roleplaySessionIdRef.current = step.session.session_id;
+    if (step.name === "roleplay")
+      roleplaySessionIdRef.current = step.session.session_id;
   }, [step]);
   const fetchVoiceToken = React.useCallback(() => {
-    if (!roleplaySessionIdRef.current) return Promise.reject(new Error("No active session"));
+    if (!roleplaySessionIdRef.current)
+      return Promise.reject(new Error("No active session"));
     return getCoachingVoiceToken(roleplaySessionIdRef.current);
   }, []);
   const onTranscript = React.useCallback((text: string) => {
@@ -90,20 +110,62 @@ export default function CoachingSessionPage() {
     if (voiceError) setError(voiceError);
   }, [voiceError]);
 
+  const searchParams = useSearchParams();
+  const resumeSessionId = searchParams.get("resume");
+
   React.useEffect(() => {
     let cancelled = false;
     async function init() {
       try {
-        const [{ scenarios }, session] = await Promise.all([
-          getCoachingScenarios(),
-          startCoachingSession({ scenario: params.scenario }),
-        ]);
+        const { scenarios } = await getCoachingScenarios();
         if (cancelled) return;
         const meta = scenarios.find((s) => s.key === params.scenario);
         if (!meta) {
           setStep({ name: "error", message: "Unknown scenario." });
           return;
         }
+
+        // ?resume=<session_id> (from the Explore resume banner / active-sessions
+        // registry) — only ever issued for engaged roleplay sessions (draft-type
+        // scenarios never persist partial progress, so they're never resumable).
+        if (resumeSessionId) {
+          try {
+            const state = await getCoachingSessionState(resumeSessionId);
+            if (cancelled) return;
+            if (
+              state.status === "IN_PROGRESS" &&
+              state.roleplay &&
+              state.turns.length > 1
+            ) {
+              setStep({
+                name: "roleplay",
+                session: {
+                  session_id: state.session_id,
+                  scenario: state.scenario,
+                  label: state.label,
+                  input_mode: state.input_mode,
+                  roleplay: true,
+                  prompt: state.prompt,
+                },
+                scenarioMeta: meta,
+                turns: state.turns,
+                transcript: state.turns
+                  .filter((t) => t.role === "user")
+                  .map((t) => t.content)
+                  .join(" "),
+                endedEarly: false,
+              });
+              return;
+            }
+          } catch {
+            // Resume link stale/invalid (e.g. already superseded) — fall through to a fresh start.
+          }
+        }
+
+        const session = await startCoachingSession({
+          scenario: params.scenario,
+        });
+        if (cancelled) return;
         if (meta.roleplay) {
           setStep({
             name: "roleplay",
@@ -122,7 +184,10 @@ export default function CoachingSessionPage() {
         if (!cancelled) {
           setStep({
             name: "error",
-            message: err instanceof ApiError ? err.message : "Couldn't start this session.",
+            message:
+              err instanceof ApiError
+                ? err.message
+                : "Couldn't start this session.",
           });
         }
       }
@@ -131,7 +196,7 @@ export default function CoachingSessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.scenario]);
+  }, [params.scenario, resumeSessionId]);
 
   async function handleSubmitDraft() {
     if (step.name !== "draft") return;
@@ -143,13 +208,17 @@ export default function CoachingSessionPage() {
           ? {
               transcript: draftText,
               duration_seconds: voiceStartedAt.current
-                ? Math.max(0, (performance.now() - voiceStartedAt.current) / 1000)
+                ? Math.max(
+                    0,
+                    (performance.now() - voiceStartedAt.current) / 1000,
+                  )
                 : 0,
             }
           : undefined;
       const result = await submitCoachingSession(step.session.session_id, {
         submission: draftText,
-        subject: step.scenarioMeta.key === "email_writing" ? subject : undefined,
+        subject:
+          step.scenarioMeta.key === "email_writing" ? subject : undefined,
         audio_features: audioFeatures,
       });
       voiceStartedAt.current = null;
@@ -163,7 +232,12 @@ export default function CoachingSessionPage() {
   }
 
   function handleStartDraftVoice() {
-    if (step.name !== "draft" || step.session.input_mode !== "audio" || isListening) return;
+    if (
+      step.name !== "draft" ||
+      step.session.input_mode !== "audio" ||
+      isListening
+    )
+      return;
     voiceStartedAt.current = performance.now();
     setVoiceStatus("Listening...");
     const started = start((text) => {
@@ -218,7 +292,8 @@ export default function CoachingSessionPage() {
           ? { transcript: step.transcript, duration_seconds: 0 }
           : undefined;
       const result = await submitCoachingSession(step.session.session_id, {
-        submission: step.session.input_mode === "text" ? step.transcript : undefined,
+        submission:
+          step.session.input_mode === "text" ? step.transcript : undefined,
         audio_features: audioFeatures,
       });
       setStep({ name: "results", result });
@@ -263,7 +338,9 @@ export default function CoachingSessionPage() {
         </div>
         <div className="rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
           <p className="text-sm font-medium text-foreground">Prompt</p>
-          <p className="mt-1 text-sm text-muted-foreground">{step.session.prompt}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {step.session.prompt}
+          </p>
 
           <div className="mt-5 flex flex-col gap-4">
             {step.scenarioMeta.key === "email_writing" ? (
@@ -304,8 +381,12 @@ export default function CoachingSessionPage() {
               </p>
             </div>
           ) : null}
-          {speechError ? <p className="mt-2 text-sm text-danger">{speechError}</p> : null}
-          {voiceStatus ? <p className="mt-2 text-sm text-muted-foreground">{voiceStatus}</p> : null}
+          {speechError ? (
+            <p className="mt-2 text-sm text-danger">{speechError}</p>
+          ) : null}
+          {voiceStatus ? (
+            <p className="mt-2 text-sm text-muted-foreground">{voiceStatus}</p>
+          ) : null}
 
           {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
 
@@ -342,7 +423,10 @@ export default function CoachingSessionPage() {
         </div>
 
         <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
-          <div ref={scrollRef} className="flex max-h-[50vh] flex-col gap-4 overflow-y-auto">
+          <div
+            ref={scrollRef}
+            className="flex max-h-[50vh] flex-col gap-4 overflow-y-auto"
+          >
             {step.turns.map((turn, i) => (
               <div
                 key={i}
@@ -352,7 +436,9 @@ export default function CoachingSessionPage() {
                     : "flex max-w-[86%] items-start gap-2"
                 }
               >
-                {turn.role === "assistant" ? <AiCoachAvatar className="mt-5" /> : null}
+                {turn.role === "assistant" ? (
+                  <AiCoachAvatar className="mt-5" />
+                ) : null}
                 <div className="min-w-0 flex-1">
                   <span
                     className={cn(
@@ -372,14 +458,17 @@ export default function CoachingSessionPage() {
                     {turn.content}
                   </div>
                 </div>
-                {turn.role === "user" ? <UserChatAvatar className="mt-5" /> : null}
+                {turn.role === "user" ? (
+                  <UserChatAvatar className="mt-5" />
+                ) : null}
               </div>
             ))}
           </div>
 
           {step.endedEarly ? (
             <p className="text-sm text-warning">
-              This scenario ended early. Click &quot;End &amp; Get Feedback&quot; to see your results.
+              This scenario ended early. Click &quot;End &amp; Get
+              Feedback&quot; to see your results.
             </p>
           ) : (
             <div className="flex items-center gap-2 border-t border-border pt-4">
@@ -429,7 +518,11 @@ export default function CoachingSessionPage() {
             </div>
           )}
           {liveVoiceStatus ? (
-            <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-muted-foreground"
+            >
               {liveVoiceStatus}
             </p>
           ) : null}
@@ -447,25 +540,35 @@ export default function CoachingSessionPage() {
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
         <h1 className="mt-3 font-serif text-h2 font-semibold">
-          {Math.round(result.scores.professional_tone ?? 0)}/100 Professional Tone
+          {Math.round(result.scores.professional_tone ?? 0)}/100 Professional
+          Tone
         </h1>
-        <p className="mt-2 text-sm text-primary-foreground/85">{result.summary}</p>
+        <p className="mt-2 text-sm text-primary-foreground/85">
+          {result.summary}
+        </p>
       </div>
 
       <div
         className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm"
         style={{ animationDelay: "100ms" }}
       >
-        <h2 className="font-serif text-lg font-semibold text-foreground">Scores</h2>
+        <h2 className="font-serif text-lg font-semibold text-foreground">
+          Scores
+        </h2>
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
           {Object.entries(result.scores)
             .filter(([, value]) => value !== null)
             .map(([key, value]) => (
-              <div key={key} className="rounded-xl border border-border bg-surface p-4">
+              <div
+                key={key}
+                className="rounded-xl border border-border bg-surface p-4"
+              >
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {key.replace(/_/g, " ")}
                 </p>
-                <p className="mt-1 text-xl font-semibold text-foreground">{Math.round(value ?? 0)}</p>
+                <p className="mt-1 text-xl font-semibold text-foreground">
+                  {Math.round(value ?? 0)}
+                </p>
               </div>
             ))}
         </div>
@@ -476,13 +579,19 @@ export default function CoachingSessionPage() {
           className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm"
           style={{ animationDelay: "180ms" }}
         >
-          <h2 className="font-serif text-lg font-semibold text-foreground">Feedback</h2>
+          <h2 className="font-serif text-lg font-semibold text-foreground">
+            Feedback
+          </h2>
           <ul className="mt-3 flex flex-col gap-3">
             {result.flags.map((flag, i) => (
               <li key={i} className="rounded-xl bg-warning/10 p-3 text-sm">
-                <p className="font-medium text-foreground">{flag.message ?? flag.type}</p>
+                <p className="font-medium text-foreground">
+                  {flag.message ?? flag.type}
+                </p>
                 {flag.suggestion ? (
-                  <p className="mt-1 text-muted-foreground">{flag.suggestion}</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {flag.suggestion}
+                  </p>
                 ) : null}
               </li>
             ))}
@@ -503,7 +612,9 @@ export default function CoachingSessionPage() {
           className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm"
           style={{ animationDelay: "260ms" }}
         >
-          <h2 className="font-serif text-lg font-semibold text-foreground">Polished Version</h2>
+          <h2 className="font-serif text-lg font-semibold text-foreground">
+            Polished Version
+          </h2>
           <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
             {result.polished_version}
           </p>

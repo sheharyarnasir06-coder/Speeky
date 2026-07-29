@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   Headphones,
@@ -21,6 +21,7 @@ import {
   endScenarioSession,
   getScenarioDetail,
   getScenarioSession,
+  getScenarioSessionState,
   getScenarioVoiceToken,
   sendScenarioTurn,
   startScenarioSession,
@@ -122,13 +123,45 @@ export default function ScenarioSessionPage() {
       .catch(() => {});
   }, []);
 
+  const searchParams = useSearchParams();
+  const resumeSessionId = searchParams.get("resume");
+
   React.useEffect(() => {
     let cancelled = false;
-    getScenarioDetail(params.key)
-      .then((detail) => {
+
+    async function load() {
+      try {
+        const detail = await getScenarioDetail(params.key);
+        if (cancelled) return;
+
+        // ?resume=<session_id> (from the Explore resume banner / active-sessions
+        // registry) — load the in-progress conversation directly instead of the
+        // intro screen, so leaving and coming back never loses turns.
+        if (resumeSessionId) {
+          try {
+            const state = await getScenarioSessionState(resumeSessionId);
+            if (cancelled) return;
+            if (state.status === "in_progress") {
+              setStep({
+                name: "chat",
+                session: {
+                  session_id: state.session_id, scenario_key: state.scenario_key,
+                  label: detail.label, persona: detail.persona, intent: detail.intent,
+                  target_vocab: detail.target_vocab, opening_message: "",
+                },
+                turns: state.turns.map((t) => ({
+                  role: t.role === "user" ? "user" : "assistant", content: t.content,
+                })),
+              });
+              return;
+            }
+          } catch {
+            // Resume link stale/invalid (e.g. already superseded) — fall through to intro.
+          }
+        }
+
         if (!cancelled) setStep({ name: "intro", detail });
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 403) {
           setStep({ name: "locked", message: err.message });
@@ -141,11 +174,14 @@ export default function ScenarioSessionPage() {
                 : "Couldn't load this scenario.",
           });
         }
-      });
+      }
+    }
+
+    load();
     return () => {
       cancelled = true;
     };
-  }, [params.key]);
+  }, [params.key, resumeSessionId]);
 
   async function handleStart() {
     if (step.name !== "intro") return;

@@ -110,5 +110,3 @@ class RecordingRejectedSchema(BaseModel):
     status: str = "rejected"
     reason: str
     message: str
-    appeal_token: Optional[str] = None
-    appeal_prompt: Optional[str] = None

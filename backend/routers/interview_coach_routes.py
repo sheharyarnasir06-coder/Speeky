@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from services.interview_coach_service import (
     add_peer_comment,
     end_session,
+    get_session_state,
     list_peer_comments,
     pause_session,
     report_comment,
@@ -20,6 +21,7 @@ router = APIRouter()
 
 # Interview Coach (Ubase, panel, multi-round)
 router.add_api_route("/sessions", start_session, methods=["POST"], status_code=201)
+router.add_api_route("/sessions/{session_id}", get_session_state, methods=["GET"])
 router.add_api_route("/sessions/{session_id}/answer", submit_answer, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/voice-token", voice_token, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/pause", pause_session, methods=["POST"])

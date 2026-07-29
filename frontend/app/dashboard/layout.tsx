@@ -11,9 +11,11 @@ import { OveruseNudgeBanner } from "@/components/dashboard/OveruseNudgeBanner";
 import { StreakWarningBanner } from "@/components/dashboard/StreakWarningBanner";
 import { StreakNavIcon } from "@/components/dashboard/StreakNavIcon";
 import { LearningGoalGate } from "@/components/dashboard/LearningGoalGate";
+import { ConsentGate } from "@/components/dashboard/ConsentGate";
 import { VoiceStatusWidget } from "@/components/common/VoiceStatusWidget";
 import { useAuth } from "@/contexts/AuthContext";
 import { AssessmentProvider } from "@/contexts/AssessmentContext";
+import { ActiveSessionsProvider } from "@/contexts/ActiveSessionsContext";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export default function DashboardLayout({
@@ -50,11 +52,17 @@ export default function DashboardLayout({
   // learningGoalSet=false) — block the whole dashboard behind the same mandatory
   // choice new signups make, instead of a dismissible banner, so gating stays real.
   if (!user.learningGoalSet) {
-    return <LearningGoalGate />;
+    return (
+      <ConsentGate>
+        <LearningGoalGate />
+      </ConsentGate>
+    );
   }
 
   return (
+    <ConsentGate>
     <AssessmentProvider>
+    <ActiveSessionsProvider>
       <div className="flex min-h-screen bg-background">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
@@ -77,6 +85,8 @@ export default function DashboardLayout({
           </main>
         </div>
       </div>
+    </ActiveSessionsProvider>
     </AssessmentProvider>
+    </ConsentGate>
   );
 }

@@ -25,6 +25,7 @@ from middlewares.error_handler import (
     validation_error_handler,
 )
 from routers.accent_progress_routes import router as accent_progress_router
+from routers.active_session_routes import router as active_session_router
 from routers.analytics_routes import router as analytics_router
 from routers.auth_routes import router as auth_router
 from routers.category_routes import router as category_router
@@ -96,6 +97,7 @@ app.include_router(auth_router, prefix="/api/auth")
 app.include_router(user_router, prefix="/api/users")
 app.include_router(category_router, prefix="/api/categories")
 app.include_router(analytics_router, prefix="/api/analytics")
+app.include_router(active_session_router, prefix="/api/active-sessions")
 app.include_router(assessment_router, prefix="/api/assessment")
 app.include_router(coaching_router, prefix="/api/coaching")
 app.include_router(conversation_router, prefix="/api/conversation")

@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api";
 import { getCoachingScenarios, type CoachingScenarioMeta } from "@/lib/coaching";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { CodeSwitchWordsCard } from "@/components/dashboard/CodeSwitchWordsCard";
+import { ExploreResumeBanner } from "@/components/dashboard/ExploreResumeBanner";
 import { cn } from "@/lib/utils";
 
 const SCENARIO_ICONS: Record<string, typeof Mail> = {
@@ -48,6 +49,8 @@ export default function CoachingPage() {
           presentations — and get feedback on tone, clarity, and effectiveness.
         </p>
       </div>
+
+      <ExploreResumeBanner />
 
       {!isUnlocked ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">

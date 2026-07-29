@@ -25,7 +25,7 @@ from fastapi import Depends
 from fastapi.responses import JSONResponse
 from prisma import Json
 
-from lib import livekit_tokens, llm_client, prompts, session_scorer
+from lib import explore_sessions, livekit_tokens, llm_client, prompts, session_scorer
 from lib.prisma_client import db
 from lib.session_scorer import AudioFeatures, ScoredSession
 from middlewares.auth_middleware import require_auth
@@ -517,6 +517,10 @@ async def start_session(payload: StartCoachingSchema, user_id: str = Depends(req
     if not meta:
         return JSONResponse(status_code=400, content={"error": "Unknown scenario"})
 
+    # A fresh start supersedes any other open Explore-group session this user has
+    # running elsewhere — see lib/explore_sessions.py.
+    await explore_sessions.supersede_open_explore_sessions(user_id)
+
     input_mode = _resolve_input_mode(scenario_key, payload.input_mode)
     prompt_text = payload.prompt or (meta["prompts"][0] if meta["prompts"] else meta["label"])
 
@@ -740,9 +744,14 @@ async def get_session(session_id: str, user_id: str = Depends(require_auth)):
     session = await db.coachingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
         return JSONResponse(status_code=404, content={"error": "Coaching session not found"})
+    scenario_key = SCENARIO_ENUM_TO_KEY[session.scenario]
+    meta = scenario_meta(scenario_key)
     return {
         "session_id": session.id,
-        "scenario": SCENARIO_ENUM_TO_KEY[session.scenario],
+        "scenario": scenario_key,
+        "label": meta["label"] if meta else scenario_key,
+        "roleplay": meta["roleplay"] if meta else False,
+        "turns": session.turns,  # roleplay chat history — used to resume mid-conversation
         "input_mode": "audio" if session.inputMode == CoachingInputMode.AUDIO else "text",
         "status": session.status,
         "prompt": session.promptText,

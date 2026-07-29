@@ -11,7 +11,10 @@ export interface AuthUser {
   learningGoal: LearningGoal;
   // false for every pre-US-08 account (backfilled) and any account that hasn't
   // submitted a real choice yet — the LearningGoalGate blocks the dashboard on this.
-  learningGoalSet: boolean
+  learningGoalSet: boolean;
+  isConsented?: boolean;
+  consentVersion?: string | null;
+  consentAcceptedAt?: string | null;
 }
 
 // Signup is OTP-gated on the backend now: this only sends a code, it does

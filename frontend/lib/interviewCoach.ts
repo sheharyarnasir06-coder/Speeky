@@ -85,6 +85,22 @@ export function startInterviewSession(data: {
   });
 }
 
+export interface InterviewSessionState {
+  session_id: string;
+  mode: InterviewMode;
+  status: string;
+  exchanges: AIExchange[];
+  current_round_index: number;
+  started_at: string;
+}
+
+// Resume fallback — sessionStorage is the fast path for the tab that started the
+// session, but it doesn't survive a fresh navigation (e.g. clicking Resume from
+// the Explore banner in a new tab, or after sessionStorage was cleared).
+export function getInterviewCoachSession(sessionId: string) {
+  return api<InterviewSessionState>(`/interview-coach/sessions/${sessionId}`);
+}
+
 export function getInterviewCoachVoiceToken(sessionId: string) {
   return api<VoiceTokenResult>(`/interview-coach/sessions/${sessionId}/voice-token`, {
     method: "POST",

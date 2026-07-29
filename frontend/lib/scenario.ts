@@ -99,6 +99,13 @@ export interface ScenarioSessionState {
   completed_at: string | null;
 }
 
+// Raw session state — used to resume an in-progress session (the ?resume= query
+// param flow) where the caller needs the actual turns/status, not the end-result
+// mapping getScenarioSession() below returns.
+export function getScenarioSessionState(sessionId: string) {
+  return api<ScenarioSessionState>(`/scenarios/sessions/${sessionId}`);
+}
+
 // Used when a session ends on its own (silence auto-close, aggression, medical-emergency
 // break) instead of the learner clicking "End Scenario" — same GET the session page already
 // polls off of, just mapped into the same shape endScenarioSession() returns.

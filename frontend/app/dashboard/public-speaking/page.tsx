@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Briefcase,
+  History,
   Lock,
   Mic,
   Presentation,
@@ -11,6 +12,7 @@ import {
   Video,
 } from "lucide-react";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
+import { useActiveSessions } from "@/contexts/ActiveSessionsContext";
 import { cn } from "@/lib/utils";
 
 const SPEECH_TYPES = [
@@ -53,6 +55,7 @@ const SPEECH_TYPES = [
 
 export default function PublicSpeakingPage() {
   const { access } = useAssessmentAccess();
+  const { publicSpeaking } = useActiveSessions();
   const isUnlocked = access?.access_level === "full_access";
 
   return (
@@ -66,6 +69,14 @@ export default function PublicSpeakingPage() {
           Get detailed scorecards and actionable improvement tips.
         </p>
       </div>
+
+      {publicSpeaking?.found ? (
+        <div className="flex items-start gap-2.5 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground">
+          <History className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+          You have an unfinished {publicSpeaking.label ?? "speech"} session — starting a new
+          one below will end it.
+        </div>
+      ) : null}
 
       {!isUnlocked ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">

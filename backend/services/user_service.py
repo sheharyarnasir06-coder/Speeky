@@ -1,5 +1,7 @@
 import os
 import uuid
+import asyncio
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional
 
@@ -14,6 +16,8 @@ from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin, require_auth, require_super_admin
 from prisma.enums import Role
 from schemas.user_schemas import (
+    ConsentStatusSchema,
+    ConsentUpdateSchema,
     DeleteAccountSchema,
     LearningGoalSchema,
     LearningGoalStatusSchema,
@@ -35,6 +39,8 @@ AVATAR_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
 AVATAR_SIZE = 512
 AVATAR_QUALITY = 85
 AVATAR_MAX_PIXELS = 40_000_000  # 40Mpx guards decompression-bomb style images before resize work
+CURRENT_PRIVACY_POLICY_VERSION = "MVP Release Version 1.0"
+CONSENT_DB_RETRIES = 2
 
 def _serialize(user) -> dict:
     return {
@@ -45,16 +51,97 @@ def _serialize(user) -> dict:
         "role": user.role,
         "learningGoal": user.learningGoal,
         "learningGoalSet": user.learningGoalSet,
+        "isConsented": user.isConsented,
+        "consentVersion": user.consentVersion,
+        "consentAcceptedAt": user.consentAcceptedAt.isoformat() if user.consentAcceptedAt else None,
         "createdAt": user.createdAt.isoformat(),
     }
 
 
 # ── Self-service profile ─────────────────────────────────────────────────────
+def _consent_status(user) -> ConsentStatusSchema:
+    is_current = (
+        user.isConsented
+        and user.consentVersion == CURRENT_PRIVACY_POLICY_VERSION
+        and user.consentAcceptedAt is not None
+    )
+    return ConsentStatusSchema(
+        is_consented=is_current,
+        consent_version=user.consentVersion,
+        consent_accepted_at=user.consentAcceptedAt,
+    )
+
+
+async def _with_consent_retry(operation):
+    last_error = None
+    for attempt in range(CONSENT_DB_RETRIES + 1):
+        try:
+            return await operation()
+        except Exception as exc:
+            last_error = exc
+            if attempt >= CONSENT_DB_RETRIES:
+                raise
+            await asyncio.sleep(0.2 * (attempt + 1))
+    raise last_error
+
+
 async def get_profile(user_id: str = Depends(require_auth)):
     user = await db.user.find_unique(where={"id": user_id})
     if not user:
         return JSONResponse(status_code=404, content={"error": "User not found"})
     return {"user": _serialize(user)}
+
+
+async def get_consent(user_id: str = Depends(require_auth)):
+    user = await db.user.find_unique(where={"id": user_id})
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    return _consent_status(user)
+
+
+async def update_consent(payload: ConsentUpdateSchema, user_id: str = Depends(require_auth)):
+    if payload.policy_version != CURRENT_PRIVACY_POLICY_VERSION:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "The privacy policy changed while you were reviewing it.",
+                "latest_policy_version": CURRENT_PRIVACY_POLICY_VERSION,
+            },
+        )
+
+    if not payload.is_consented:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Consent is required to use Speeky."},
+        )
+
+    existing = await db.user.find_unique(where={"id": user_id})
+    if not existing:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    now = datetime.now(timezone.utc)
+    async def write_consent():
+        user = await db.user.update(
+            where={"id": user_id},
+            data={
+                "isConsented": True,
+                "consentVersion": CURRENT_PRIVACY_POLICY_VERSION,
+                "consentAcceptedAt": existing.consentAcceptedAt or now,
+            },
+        )
+        return user
+
+    try:
+        user = await _with_consent_retry(write_consent)
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Could not save consent right now. Please retry in a moment."},
+        )
+
+    return {"consent": _consent_status(user)}
+
 
 async def update_profile(payload: UpdateProfileSchema, user_id: str = Depends(require_auth)):
     user = await db.user.update(where={"id": user_id}, data={"name": payload.name})

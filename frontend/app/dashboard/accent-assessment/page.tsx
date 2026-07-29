@@ -3,21 +3,17 @@
 import * as React from "react";
 import {
   AlertCircle,
-  AlertTriangle,
   Info,
   Loader2,
   Mic,
   RefreshCw,
-  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
-import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   getTargetPassage,
   rejectionFromError,
-  submitLivenessAppeal,
   submitPassageAssessment,
   type AccentAssessmentResult,
   type TargetPassageResponse,
@@ -35,14 +31,7 @@ export default function AccentAssessmentPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [staleToken, setStaleToken] = React.useState(false);
-  const [isSuspended, setIsSuspended] = React.useState(false);
   const [result, setResult] = React.useState<AccentAssessmentResult | null>(null);
-
-  // US-80 Anti-Playback Appeal state
-  const [appealData, setAppealData] = React.useState<{ appealToken: string; appealPrompt: string } | null>(null);
-  const [isAppealRecording, setIsAppealRecording] = React.useState(false);
-  const [isSubmittingAppeal, setIsSubmittingAppeal] = React.useState(false);
-  const [appealMessage, setAppealMessage] = React.useState<string | null>(null);
 
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioChunksRef = React.useRef<Blob[]>([]);
@@ -55,8 +44,6 @@ export default function AccentAssessmentPage() {
     setError(null);
     setStaleToken(false);
     setResult(null);
-    setAppealData(null);
-    setAppealMessage(null);
     try {
       const data = await getTargetPassage();
       setPassageData(data);
@@ -105,7 +92,6 @@ export default function AccentAssessmentPage() {
     setIsSubmitting(true);
     setError(null);
     setStaleToken(false);
-    setAppealData(null);
     try {
       const formData = new FormData();
       formData.append("prompt_token", passageData.prompt_token);
@@ -114,21 +100,12 @@ export default function AccentAssessmentPage() {
       const res = await submitPassageAssessment(passageData.passage_id, formData);
       setResult(res);
     } catch (err) {
-      // 3+ liveness flags: account routed to support review.
-      if (err instanceof ApiError && err.status === 403 && err.message.toLowerCase().includes("suspended")) {
-        setIsSuspended(true);
-        return;
-      }
-
       // Structured rejection (playback detected, incomplete reading, quality
-      // issue, stale token, ...) — carries the real message plus, for playback
-      // flags, an appeal token/prompt for the false-positive appeal flow.
+      // issue, stale token, ...) — carries the real message; each rejection is
+      // judged independently, so the user can just try again.
       const rejection = rejectionFromError(err);
       if (rejection) {
         setError(rejection.message);
-        if (rejection.appeal_token && rejection.appeal_prompt) {
-          setAppealData({ appealToken: rejection.appeal_token, appealPrompt: rejection.appeal_prompt });
-        }
         // ACC-US-01 E-04: this passage's prompt token is dead (stale/reused) — the mic
         // button would just fail again with the same token, so surface a direct
         // "fetch new passage" recovery right here instead of only in the results view.
@@ -144,76 +121,10 @@ export default function AccentAssessmentPage() {
     }
   };
 
-  // US-80 Live Repeat Appeal recording
-  const handleStartAppealRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        await handleSendAppeal(blob);
-      };
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setIsAppealRecording(true);
-    } catch {
-      setError("Microphone permission denied for appeal.");
-    }
-  };
-
-  const handleStopAppealRecording = () => {
-    if (mediaRecorderRef.current && isAppealRecording) {
-      mediaRecorderRef.current.stop();
-      setIsAppealRecording(false);
-    }
-  };
-
-  const handleSendAppeal = async (audioBlob: Blob) => {
-    if (!appealData) return;
-    setIsSubmittingAppeal(true);
-    setAppealMessage(null);
-    try {
-      const res = await submitLivenessAppeal(appealData.appealToken, audioBlob);
-      if (res.appeal_passed) {
-        setAppealMessage("Appeal approved! Please record the passage again to complete your assessment.");
-        setAppealData(null);
-      } else {
-        setAppealMessage(res.message || "Appeal failed. Live reading verification required.");
-      }
-    } catch (err) {
-      setAppealMessage(err instanceof Error ? err.message : "Appeal processing failed. Please try again.");
-    } finally {
-      setIsSubmittingAppeal(false);
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  // US-80 3+ Flags Account Suspension Notice
-  if (isSuspended) {
-    return (
-      <div className="mx-auto flex max-w-lg flex-col items-center gap-5 rounded-2xl border border-danger/30 bg-danger/10 p-8 text-center shadow-sm">
-        <ShieldAlert className="h-12 w-12 text-danger" />
-        <h1 className="font-serif text-h2 font-semibold text-foreground">
-          Assessment Access Suspended
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Assessment access is temporarily suspended pending support review due to multiple unverified recordings.
-        </p>
-        <Button href="/dashboard" size="sm" variant="outline">
-          Return to Dashboard
-        </Button>
       </div>
     );
   }
@@ -307,44 +218,6 @@ export default function AccentAssessmentPage() {
                 ? "Analyzing rhythm & stress patterns..."
                 : "Read the full passage into your microphone"}
             </p>
-          </div>
-        </div>
-      )}
-
-      {/* US-80 False Positive Appeal Modal / Card */}
-      {appealData && (
-        <div className="flex flex-col gap-4 rounded-2xl border border-warning/30 bg-warning/10 p-6 text-foreground">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-6 w-6 text-warning shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-semibold text-foreground">Liveness Appeal Verification</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Your recording was flagged for audio verification. Repeat the short verification prompt below to clear the flag:
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-warning/20 bg-surface p-4 font-serif text-base font-medium">
-            "{appealData.appealPrompt}"
-          </div>
-
-          {appealMessage && (
-            <p className="text-xs font-medium text-primary">{appealMessage}</p>
-          )}
-
-          <div className="flex justify-end gap-3 pt-2">
-            <Button
-              size="sm"
-              variant={isAppealRecording ? "danger" : "primary"}
-              loading={isSubmittingAppeal}
-              onClick={
-                isAppealRecording
-                  ? handleStopAppealRecording
-                  : () => void runWithVoiceReadiness(handleStartAppealRecording)
-              }
-            >
-              {isAppealRecording ? "Stop & Submit Appeal" : "Record Short Verification"}
-            </Button>
           </div>
         </div>
       )}

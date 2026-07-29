@@ -18,6 +18,7 @@ import { getScenarios, type ScenarioListItem } from "@/lib/scenario";
 import { listCategories, type Category } from "@/lib/categories";
 import { resolveIcon } from "@/lib/icon-map";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
+import { ExploreResumeBanner } from "@/components/dashboard/ExploreResumeBanner";
 
 function toExploreScenario(scenario: ScenarioListItem, categories: Category[]): ExploreScenario {
   const match = categories.find((c) => c.name === scenario.category);
@@ -97,6 +98,8 @@ export default function ExplorePage() {
           Choose a real-world situation to practice your English with Speeky.
         </p>
       </div>
+
+      <ExploreResumeBanner />
 
       {!isUnlocked ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">

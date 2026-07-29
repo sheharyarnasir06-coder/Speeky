@@ -250,18 +250,6 @@
   transition: all .25s ease-in-out;
 }
 
-.Toastify__toast:not(:first-child) {
-  margin-top: -70px;
-  opacity: .9;
-  transform: scale(.96);
-}
-
-.Toastify__toast-container:hover .Toastify__toast:not(:first-child) {
-  margin-top: 8px;
-  opacity: 1;
-  transform: scale(1);
-}
-
 .Toastify__toast--success {
   border-color: hsl(var(--success) / 0.22);
   border-left: 3px solid hsl(var(--success));

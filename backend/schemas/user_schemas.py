@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal, Optional
 from schemas.auth_schemas import _require_email_format
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -52,6 +53,17 @@ class UpdateRoleSchema(BaseModel):
 
 class DeleteAccountSchema(BaseModel):
     password: str = Field(min_length=1)
+
+
+class ConsentStatusSchema(BaseModel):
+    is_consented: bool
+    consent_version: Optional[str] = None
+    consent_accepted_at: Optional[datetime] = None
+
+
+class ConsentUpdateSchema(BaseModel):
+    is_consented: bool
+    policy_version: str
 
 
 class AccentPreferenceSchema(BaseModel):

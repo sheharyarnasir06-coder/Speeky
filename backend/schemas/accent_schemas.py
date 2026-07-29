@@ -50,17 +50,6 @@ class RecordingRejectedSchema(BaseModel):
     status: str = "rejected"
     reason: str
     message: str
-    appeal_token: Optional[str] = None
-    appeal_prompt: Optional[str] = None
-
-
-class LivenessAppealRequestSchema(BaseModel):
-    appeal_token: str
-
-
-class LivenessAppealResponseSchema(BaseModel):
-    appeal_passed: bool
-    message: str
 
 
 # ACC-US-12: Accent Progress Tracker Visualization

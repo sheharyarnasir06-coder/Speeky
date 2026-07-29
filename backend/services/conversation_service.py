@@ -40,6 +40,7 @@ from fastapi.responses import JSONResponse, Response
 
 from lib import (
     ai_client,
+    explore_sessions,
     grammar_checker,
     kv_store,
     livekit_tokens,
@@ -308,6 +309,10 @@ async def _start_session(user_id: str, req: StartConversationSchema) -> Dict:
             topic_key, custom_topic = "custom", req.custom_topic
     elif req.topic_key not in prompts.TOPICS:
         raise InvalidSubmissionError(f"Unknown topic_key. Valid: {list(prompts.TOPICS)}")
+
+    # A fresh start supersedes any other open Explore-group session this user has
+    # running elsewhere — see lib/explore_sessions.py.
+    await explore_sessions.supersede_open_explore_sessions(user_id)
 
     level, level_source, stale_warning = await _resolve_level(user_id, req.level_override)
 

@@ -49,6 +49,9 @@ def _auth_user(user) -> dict:
         "role": user.role,
         "learningGoal": user.learningGoal,
         "learningGoalSet": user.learningGoalSet,
+        "isConsented": user.isConsented,
+        "consentVersion": user.consentVersion,
+        "consentAcceptedAt": user.consentAcceptedAt.isoformat() if user.consentAcceptedAt else None,
     }
 
 

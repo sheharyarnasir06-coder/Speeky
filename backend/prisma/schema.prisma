@@ -146,13 +146,14 @@ model User {
   // flips it true the first time a user (new or backfilled) actually saves a choice.
   learningGoalSet Boolean @default(false)
 
+  // PRIV-US-02: required consent gate for the current policy version.
+  isConsented       Boolean   @default(false)
+  consentVersion    String?
+  consentAcceptedAt DateTime?
+
   @@map("users")
 }
 
-// CSC-US-01: personalized "common code-switch words" list. One row per (userId, word) —
-// a repeat use UPDATES the row (count++ / lastSeenAt), never appends a duplicate, so the
-// practice tracker shows each trouble-word once with its frequency. Populated from the
-// code_switch flags Workplace Coaching already produces (services/code_switch_tracker.py).
 model CodeSwitchWord {
   id          String   @id @default(cuid())
   userId      String
