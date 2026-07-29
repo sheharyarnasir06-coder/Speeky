@@ -17,6 +17,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from lib.prisma_client import db
+from lib.scheduler import start_scheduler, stop_scheduler
 from middlewares.error_handler import (
     AuthError,
     app_error_handler,
@@ -25,6 +26,8 @@ from middlewares.error_handler import (
     validation_error_handler,
 )
 from routers.accent_progress_routes import router as accent_progress_router
+from routers.alert_routes import router as alert_router
+from routers.analytics_routes import router as analytics_router
 from routers.auth_routes import router as auth_router
 from routers.category_routes import router as category_router
 from routers.user_routes import router as user_router
@@ -50,13 +53,16 @@ from routers.code_switch_routes import router as code_switch_router
 from routers.rewrite_routes import router as rewrite_router
 from routers.rewrite_vocab_routes import router as rewrite_vocab_router
 from routers.script_practice_routes import router as script_practice_router
+from routers.report_routes import router as report_router
 from utils.app_error import AppError
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await db.connect()
+    start_scheduler()
     yield
+    stop_scheduler()
     await db.disconnect()
 
 limiter = Limiter(
@@ -117,6 +123,9 @@ app.include_router(code_switch_router, prefix="/api/code-switch")
 app.include_router(rewrite_router, prefix="/api/rewrite")
 app.include_router(rewrite_vocab_router, prefix="/api/rewrite-vocab")
 app.include_router(script_practice_router, prefix="/api/script-practice")
+app.include_router(alert_router, prefix="/api/alerts")
+app.include_router(report_router, prefix="/api/reports")
+app.include_router(analytics_router, prefix="/api/analytics")
 
 # Local-folder avatar storage, exposed to frontend as static files
 _uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")

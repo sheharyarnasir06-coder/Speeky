@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, FolderTree, ShieldAlert, Users2, Wand2 } from "lucide-react";
+import { ArrowRight, BellRing, FileText, FolderTree, LineChart, ShieldAlert, Users2, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -36,6 +36,27 @@ const CARDS: AdminHubCard[] = [
     description:
       "View every learner and admin account, promote or revoke Admin access, and transfer Super Admin ownership.",
     superAdminOnly: true,
+  },
+  {
+    href: "/dashboard/admin/analytics",
+    icon: LineChart,
+    title: "Platform Analytics",
+    description:
+      "Signups, retention, churn, and revenue trends — the shared pipeline anomaly alerts and scheduled reports both read from.",
+  },
+  {
+    href: "/dashboard/admin/alerts",
+    icon: BellRing,
+    title: "Alert Center",
+    description:
+      "Review anomaly alerts, acknowledge or mark false positives, and configure per-metric thresholds and delivery channels.",
+  },
+  {
+    href: "/dashboard/admin/reports",
+    icon: FileText,
+    title: "Scheduled Reports",
+    description:
+      "Build recurring report packages — metrics, recipients, cadence, and timezone — and review send history.",
   },
 ];
 

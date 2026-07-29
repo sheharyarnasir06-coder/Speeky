@@ -1,5 +1,6 @@
 import os
 from email.message import EmailMessage
+from typing import Iterable, Optional, Tuple
 
 import aiosmtplib
 
@@ -173,6 +174,158 @@ async def _send_email(to: str, subject: str, heading: str, body_html: str, text_
         password=cfg["password"],
         use_tls=cfg["use_tls"],
         start_tls=cfg["start_tls"],
+    )
+
+
+async def _send_email_with_attachment(
+    to: str,
+    subject: str,
+    heading: str,
+    body_html: str,
+    text_body: str,
+    attachment: Optional[Tuple[str, bytes, str]] = None,  # (filename, content, mime_subtype)
+) -> None:
+    """Same shell as `_send_email`, plus one optional file attachment — used by
+    the scheduled-report email (GAP-04) where `_send_email` has no attachment
+    support today."""
+    cfg = _get_transport_config()
+
+    msg = EmailMessage()
+    msg["From"] = os.environ.get("SMTP_FROM", '"Speeky AI" <no-reply@speeky.ai>')
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(text_body)
+    msg.add_alternative(_render_template(heading, body_html), subtype="html")
+
+    if attachment:
+        filename, content, subtype = attachment
+        maintype = "application" if subtype in ("pdf", "octet-stream") else "text"
+        msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
+
+    await aiosmtplib.send(
+        msg,
+        hostname=cfg["hostname"],
+        port=cfg["port"],
+        username=cfg["username"],
+        password=cfg["password"],
+        use_tls=cfg["use_tls"],
+        start_tls=cfg["start_tls"],
+    )
+
+
+# ── GAP-03 (US-201): Anomaly alert delivery ──────────────────────────────────
+async def send_anomaly_alert_email(to: str, metric_label: str, value: float, baseline: float, deviation: float, dashboard_url: str) -> None:
+    body_html = f"""
+    <p>An anomaly was detected in <strong>{metric_label}</strong>.</p>
+    <ul>
+        <li>Current value: <strong>{value}</strong></li>
+        <li>Expected (baseline): <strong>{round(baseline, 2)}</strong></li>
+        <li>Deviation: <strong>{round(deviation, 2)}</strong></li>
+    </ul>
+    <div class="button-container">
+        <a href="{dashboard_url}" class="button">View on Dashboard</a>
+    </div>
+    """
+    await _send_email(
+        to=to,
+        subject=f"[Speeky Alert] Anomaly detected in {metric_label}",
+        heading="Anomaly Detected",
+        body_html=body_html,
+        text_body=(
+            f"Anomaly detected in {metric_label}: value={value}, baseline={round(baseline, 2)}, "
+            f"deviation={round(deviation, 2)}.\n\nView filtered dashboard: {dashboard_url}"
+        ),
+    )
+
+
+async def send_alert_digest_email(to: str, breaches: Iterable[dict], dashboard_url: str) -> None:
+    """E-01: one email for N simultaneous breaches instead of N separate emails."""
+    breaches = list(breaches)
+    items_html = "".join(
+        f"<li><strong>{b['metric_label']}</strong>: {b['value']} (baseline {round(b['baseline'], 2)})</li>"
+        for b in breaches
+    )
+    body_html = f"""
+    <p>{len(breaches)} metrics were affected around the same time — grouped into one digest so this doesn't look like {len(breaches)} unrelated incidents.</p>
+    <ul>{items_html}</ul>
+    <div class="button-container">
+        <a href="{dashboard_url}" class="button">View on Dashboard</a>
+    </div>
+    """
+    await _send_email(
+        to=to,
+        subject=f"[Speeky Alert] {len(breaches)} metrics affected — possible outage",
+        heading="Multiple Metrics Affected",
+        body_html=body_html,
+        text_body=f"{len(breaches)} metrics breached together: " + ", ".join(b["metric_label"] for b in breaches) + f"\n\n{dashboard_url}",
+    )
+
+
+async def send_alert_resolved_email(to: str, metric_label: str, dashboard_url: str) -> None:
+    """E-05: exactly one resolution notice when an ongoing incident normalizes."""
+    body_html = f"""
+    <p><strong>{metric_label}</strong> has returned to its normal range. No further action needed.</p>
+    <div class="button-container">
+        <a href="{dashboard_url}" class="button">View on Dashboard</a>
+    </div>
+    """
+    await _send_email(
+        to=to,
+        subject=f"[Speeky Alert] {metric_label} back to normal",
+        heading="Anomaly Resolved",
+        body_html=body_html,
+        text_body=f"{metric_label} has returned to its normal range.\n\n{dashboard_url}",
+    )
+
+
+async def send_unassigned_alert_email(to: str, metric_label: str, dashboard_url: str) -> None:
+    """E-04: notifies a Super Admin that a breaching metric has no owner configured."""
+    body_html = f"""
+    <p><strong>{metric_label}</strong> breached its expected range, but no admin is configured to own alerts for it.</p>
+    <p>Please assign an owner in threshold settings so future breaches reach the right person.</p>
+    <div class="button-container">
+        <a href="{dashboard_url}" class="button">View on Dashboard</a>
+    </div>
+    """
+    await _send_email(
+        to=to,
+        subject=f"[Speeky Alert] Unassigned anomaly: {metric_label}",
+        heading="Unassigned Alert Needs an Owner",
+        body_html=body_html,
+        text_body=f"{metric_label} breached with no configured owner. Assign one in threshold settings.\n\n{dashboard_url}",
+    )
+
+
+# ── GAP-04 (US-202): Scheduled report delivery ───────────────────────────────
+async def send_report_email(to: str, report_name: str, attachment_filename: str, attachment_bytes: bytes, attachment_subtype: str) -> None:
+    body_html = f"""
+    <p>Your scheduled report <strong>{report_name}</strong> is attached.</p>
+    """
+    await _send_email_with_attachment(
+        to=to,
+        subject=f"Speeky Report: {report_name}",
+        heading="Your Scheduled Report",
+        body_html=body_html,
+        text_body=f"Your scheduled report '{report_name}' is attached.",
+        attachment=(attachment_filename, attachment_bytes, attachment_subtype),
+    )
+
+
+async def send_report_generation_failed_email(to: str, report_name: str, dashboard_url: str) -> None:
+    """E-01: after 2 retries fail, tell the owner instead of failing silently."""
+    body_html = f"""
+    <p>We couldn't generate your scheduled report <strong>{report_name}</strong> after 3 attempts.</p>
+    <p>View the dashboard directly in the meantime:</p>
+    <div class="button-container">
+        <a href="{dashboard_url}" class="button">View Dashboard</a>
+    </div>
+    """
+    await _send_email(
+        to=to,
+        subject=f"Speeky Report failed: {report_name}",
+        heading="Report Generation Failed",
+        body_html=body_html,
+        text_body=f"Report '{report_name}' failed to generate after 3 attempts. View the dashboard directly: {dashboard_url}",
     )
 
 

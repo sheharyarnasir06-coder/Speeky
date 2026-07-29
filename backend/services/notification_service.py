@@ -208,6 +208,16 @@ async def _ack_pending_inapp(user_id: str, item_id: str) -> PendingInAppResponse
     return PendingInAppResponse(items=[PendingInAppItem(**i) for i in items])
 
 
+# ── GAP-03 (US-201): admin "push" channel for anomaly alerts ────────────────
+async def send_admin_push(user_id: str, message: str, now: Optional[datetime] = None) -> Dict:
+    """Same simulated-log mechanism as the rest of this file (no real push
+    provider exists in this codebase yet) — reused here so the alert delivery
+    layer's "push" channel isn't a second, parallel implementation."""
+    now = now or _now()
+    await _append_list(SENT_LOG_NS, user_id, {"type": "anomaly_alert", "message": message, "sent_at": now})
+    return {"sent": True}
+
+
 # ── controllers (auth-gated) ────────────────────────────────────────────────
 async def get_preferences(user_id: str = Depends(require_auth)):
     return await _get_preferences(user_id)

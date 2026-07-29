@@ -37,6 +37,12 @@ dependencies = [
     "pronouncing>=0.2.0",
     "livekit==1.1.13",
     "livekit-protocol==1.1.19",
+    # GAP-03/GAP-04: anomaly-alert monitoring + scheduled-report dispatch. APScheduler
+    # chosen over Celery — no Redis/broker exists in docker-compose.yml today.
+    "apscheduler>=3.10",
+    # GAP-04: PDF report rendering. Pure-Python wheel (no system deps like WeasyPrint's
+    # Cairo/Pango), so it installs cleanly on Windows dev machines too.
+    "reportlab>=4.2",
 ]
 
 [tool.taskipy.tasks]

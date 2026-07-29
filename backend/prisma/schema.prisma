@@ -549,6 +549,138 @@ model KvEntry {
   @@map("kv_entries")
 }
 
+// GAP-03 (US-201): per-metric, per-admin anomaly threshold config. Multiple admins
+// can own the same metric (each gets their own sensitivity + channels); a metric
+// that breaches with ZERO active rows here is exactly E-04 (unassigned alert).
+model MetricThreshold {
+  id              String   @id @default(cuid())
+  metricKey       String // "daily_signups" | "day1_retention" | "day7_retention" | "churn_rate" | "revenue"
+  ownerAdminId    String // admin/super-admin User.id who is notified on breach — no formal relation (KvEntry-style loose coupling)
+  thresholdType   String   @default("stddev_multiplier") // stddev_multiplier | percent_change | absolute
+  thresholdValue  Float    @default(2.0)
+  direction       String   @default("any") // above | below | any
+  channels        String[] @default(["email"]) // email | slack | push
+  slackWebhookUrl String? // E-03: unreachable/missing -> falls back to email
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([metricKey, ownerAdminId])
+  @@index([metricKey, isActive])
+  @@map("metric_thresholds")
+}
+
+// GAP-03 (US-201): one row per anomaly detection run per metric. digestGroupId groups
+// multiple simultaneous breaches into one notification (E-01 alert storm). incidentKey
+// identifies an ONGOING anomaly across checking intervals so repeat alerts are
+// suppressed until it resolves (E-05).
+model AnomalyAlert {
+  id                   String    @id @default(cuid())
+  metricKey            String
+  value                Float
+  baselineValue        Float
+  deviation            Float // (value - baseline) in std-devs, signed
+  windowStart          DateTime
+  windowEnd            DateTime
+  status               String    @default("open") // open | acknowledged | false_positive | resolved
+  digestGroupId        String? // set when >1 metric breached in the same detection run
+  isUnassigned         Boolean   @default(false) // E-04: no MetricThreshold owner existed at breach time
+  incidentKey          String // metricKey + a stable bucket id — same ongoing incident reuses this
+  deepLinkPath         String // always a filtered dashboard path, never the homepage (acceptance criterion)
+  acknowledgedBy       String?
+  acknowledgedAt       DateTime?
+  falsePositiveMarkedBy String?
+  resolvedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@index([metricKey, createdAt])
+  @@index([status])
+  @@index([digestGroupId])
+  @@index([incidentKey, status])
+  @@map("anomaly_alerts")
+}
+
+// GAP-03 (US-201) E-03: delivery attempt log per channel, per alert or digest — Super
+// Admin review surface for channel failures (e.g. broken Slack webhook).
+model AlertDeliveryLog {
+  id             String   @id @default(cuid())
+  alertId        String?
+  digestGroupId  String?
+  channel        String // slack | email | push
+  status         String // sent | failed | fallback
+  error          String?
+  createdAt      DateTime @default(now())
+
+  @@index([alertId])
+  @@index([digestGroupId])
+  @@map("alert_delivery_logs")
+}
+
+// GAP-04 (US-202): a recurring report package config. recipients holds both internal
+// admin accounts and external stakeholder emails. pendingScheduleUpdate/currentlyGenerating
+// implement E-03 (an edit made mid-run is queued, applied only after that run completes).
+model ReportTemplate {
+  id                    String    @id @default(cuid())
+  name                  String
+  ownerAdminId          String
+  metrics               String[] // metric keys, may include "revenue" (E-04 sensitive-data check)
+  dateRangeType         String    @default("last_7_days") // last_7_days | last_30_days | month_to_date | custom
+  recurrence            String    @default("weekly") // weekly | monthly | none (manual/on-demand only)
+  recurrenceDay         Int? // weekly: 0(Mon)-6(Sun); monthly: 1-31
+  recurrenceHour        Int       @default(9)
+  recurrenceMinute      Int       @default(0)
+  timezone              String    @default("UTC") // IANA tz name (E-05) — the schedule UI shows/edits this explicitly
+  recipients            Json      @default("[]") // [{type: "internal"|"external", value: userId|email}]
+  format                String    @default("pdf") // pdf | csv | both
+  isActive              Boolean   @default(true)
+  nextRunAt             DateTime?
+  currentlyGenerating   Boolean   @default(false)
+  pendingScheduleUpdate Json? // E-03: edit fields queued while a run is in progress
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([nextRunAt, isActive])
+  @@index([ownerAdminId])
+  @@map("report_templates")
+}
+
+// GAP-04 (US-202): one row per generation attempt (scheduled or "Send now"). deliveryLog
+// carries E-02 per-recipient bounce tracking so one bad address never blocks the rest.
+model ReportRun {
+  id            String    @id @default(cuid())
+  templateId    String
+  status        String    @default("pending") // pending | generating | success | failed | failed_permanently
+  attempt       Int       @default(0) // E-01: retried twice before giving up
+  triggeredBy   String    @default("schedule") // schedule | manual
+  fileUrl       String?
+  format        String?
+  deliveryLog   Json      @default("[]") // [{recipient, type, status: sent|failed|bounced, error}]
+  errorMessage  String?
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([templateId, createdAt])
+  @@map("report_runs")
+}
+
+// Generic, reusable audit trail — GAP-03/GAP-04 both call ONE service
+// (services/audit_log_service.py) against this table instead of building
+// parallel logging. Any future admin feature should reuse it too.
+model AuditLogEntry {
+  id         String   @id @default(cuid())
+  actorId    String? // null for system/scheduler-triggered events
+  action     String // e.g. "threshold.update", "alert.acknowledge", "report_template.create"
+  targetType String // e.g. "MetricThreshold", "AnomalyAlert", "ReportTemplate"
+  targetId   String?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([actorId, createdAt])
+  @@map("audit_log_entries")
+}
+
 model RefreshToken {
   id        String   @id @default(cuid())
   tokenHash String   @unique

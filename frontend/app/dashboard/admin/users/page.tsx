@@ -20,9 +20,9 @@ const ROLE_FILTERS = [
   { value: "SUPER_ADMIN", label: "Super Admin" },
 ];
 
-const ROLE_TONE: Record<string, "primary" | "neutral" | "warning"> = {
+const ROLE_TONE: Record<string, "brand" | "neutral" | "warning"> = {
   SUPER_ADMIN: "warning",
-  ADMIN: "primary",
+  ADMIN: "brand",
   USER: "neutral",
 };
 
