@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, FolderTree, ShieldAlert, Users2, Wand2 } from "lucide-react";
+import { ArrowRight, BarChart3, FolderTree, ShieldAlert, Users2, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -28,6 +28,13 @@ const CARDS: AdminHubCard[] = [
     title: "Categories",
     description:
       "Manage the scenario category taxonomy learners browse by — add new categories, move scenarios between them, retire unused ones.",
+  },
+  {
+    href: "/dashboard/admin/analytics",
+    icon: BarChart3,
+    title: "Analytics",
+    description:
+      "Active users, retention, onboarding drop-off, and feature adoption. Super Admins also see platform revenue.",
   },
   {
     href: "/dashboard/admin/users",
