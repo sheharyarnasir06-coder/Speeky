@@ -17,6 +17,7 @@ from prisma import Json
 
 from lib import llm_client
 from lib.prisma_client import db
+from lib.prompts import SENTENCE_BANK, DEFAULT_SENTENCE_SET
 from lib.speech_config import SpeechConfig, load_speech_config
 from middlewares.auth_middleware import require_auth
 from schemas.accent_schemas import AccentProfileSchema, WeakPointSchema
@@ -108,25 +109,25 @@ def _build_exercise_prompt(weak_points: List[Dict], batch_size: int) -> str:
 
 
 def _template_exercises(weak_points: List[Dict], batch_size: int) -> List[str]:
-    """Offline fallback: reuse the Pronunciation Coach sentence bank, picking sentences
-    whose tagged focus_sounds match a weak point, plus a generic templated drill for
-    prosodic weak points (rhythm/intonation) that aren't tied to a specific sound."""
-    from services.pronunciation_coach_service import SentenceBank  # avoids an import cycle at module load
-
-    sentence_pool = SentenceBank().all()
+    """Offline fallback: reuse the Pronunciation Coach sentence bank (phoneme ->
+    sentence list), matching a weak point's issue keyword to a phoneme key, plus a
+    generic templated drill for prosodic weak points (rhythm/intonation) that aren't
+    tied to a specific sound."""
+    sentence_pool = [s for sentences in SENTENCE_BANK.values() for s in sentences] or list(DEFAULT_SENTENCE_SET)
     exercises: List[str] = []
 
     per_weak_point = max(1, batch_size // max(1, len(weak_points)))
     for wp in weak_points:
         issue = wp["issue"].lower()
-        matching = [s for s in sentence_pool if any(issue.split()[0] in f.lower() for f in s.get("focus_sounds", []))]
+        matching_phonemes = [p for p in SENTENCE_BANK if issue.split()[0] in p.lower()]
+        matching = [s for p in matching_phonemes for s in SENTENCE_BANK[p]]
         if matching:
-            exercises.extend(s["text"] for s in matching[:per_weak_point])
+            exercises.extend(matching[:per_weak_point])
         elif issue in _GENERIC_TEMPLATES:
-            sentence = random.choice(sentence_pool)["text"]
+            sentence = random.choice(sentence_pool)
             exercises.append(_GENERIC_TEMPLATES[issue].format(sentence=sentence))
 
     if not exercises:
-        exercises = [s["text"] for s in random.sample(sentence_pool, min(3, len(sentence_pool)))]
+        exercises = random.sample(sentence_pool, min(3, len(sentence_pool)))
 
     return exercises[:batch_size]

@@ -31,7 +31,7 @@ export function StreakWarningBanner() {
       <div className="flex-1 text-sm text-foreground">
         <span className="font-medium">{message}</span>{" "}
         <a
-          href="/dashboard/conversation"
+          href="/dashboard"
           className="font-medium text-primary underline-offset-2 hover:underline"
         >
           Start now

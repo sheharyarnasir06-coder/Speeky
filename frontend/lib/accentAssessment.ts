@@ -170,14 +170,6 @@ export interface AccentAssessmentResult {
   exercises: string[];
   warning?: string | null;
   model_used?: string;
-  liveness_appeal_available?: boolean;
-  appeal_token?: string | null;
-  appeal_prompt?: string | null;
-}
-
-export interface LivenessAppealResult {
-  appeal_passed: boolean;
-  message: string;
 }
 
 // GET /api/accent-assessment/passages
@@ -188,17 +180,6 @@ export function getTargetPassage() {
 // POST /api/accent-assessment/passages/{passage_id}/assessments  (multipart)
 export function submitPassageAssessment(passageId: string, formData: FormData) {
   return api<AccentAssessmentResult>(`/accent-assessment/passages/${passageId}/assessments`, {
-    method: "POST",
-    body: formData,
-  });
-}
-
-// POST /api/accent-assessment/appeal  (multipart: appeal_token + audio)
-export function submitLivenessAppeal(appealToken: string, audio: Blob) {
-  const formData = new FormData();
-  formData.append("appeal_token", appealToken);
-  formData.append("audio", audio, "appeal.webm");
-  return api<LivenessAppealResult>("/accent-assessment/appeal", {
     method: "POST",
     body: formData,
   });

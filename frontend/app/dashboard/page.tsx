@@ -20,7 +20,7 @@ import {
   RECENT_SCENARIOS,
   type RecentScenario,
 } from "@/lib/dashboard-data";
-import { GOAL_DASHBOARD_COPY, getLearningGoal, type LearningGoal } from "@/lib/goals";
+import { GOAL_DASHBOARD_COPY, normalizeGoal } from "@/lib/goals";
 
 const CATEGORY_STYLES: Record<
   RecentScenario["category"],
@@ -65,14 +65,10 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const firstName = user?.name?.trim().split(/\s+/)[0] ?? "there";
 
-  // Read after mount (localStorage isn't available during SSR) so the
-  // dashboard reorders instantly whenever the goal changes (US-10 AC),
-  // without needing a network round trip.
-  const [goal, setGoal] = React.useState<LearningGoal>("improve_english");
-  React.useEffect(() => {
-    if (!user) return;
-    setGoal(getLearningGoal(user.id));
-  }, [user]);
+  // Goal rides along on the AuthContext user, so a profile-page update (which
+  // pushes the refreshed user into that context) reorders this dashboard
+  // instantly (US-10 AC) without its own network round trip.
+  const goal = normalizeGoal(user?.learningGoal);
 
   const { subtitle, preferredCategory } = GOAL_DASHBOARD_COPY[goal];
   const scenarios = preferredCategory

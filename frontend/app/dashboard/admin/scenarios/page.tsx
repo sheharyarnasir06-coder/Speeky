@@ -13,6 +13,8 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -623,16 +625,27 @@ export default function AdminScenariosPage() {
               </p>
               <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">
                 {previewTurns.map((turn, i) => (
-                  <div key={i} className={turn.role === "user" ? "ml-auto max-w-[85%]" : "max-w-[85%]"}>
-                    <div
-                      className={
-                        turn.role === "user"
-                          ? "rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground"
-                          : "rounded-lg bg-secondary px-3 py-2 text-xs text-secondary-foreground"
-                      }
-                    >
-                      {turn.content}
+                  <div
+                    key={i}
+                    className={
+                      turn.role === "user"
+                        ? "ml-auto flex max-w-[90%] items-start gap-2"
+                        : "flex max-w-[90%] items-start gap-2"
+                    }
+                  >
+                    {turn.role === "assistant" ? <AiCoachAvatar size="sm" /> : null}
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={
+                          turn.role === "user"
+                            ? "rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground"
+                            : "rounded-lg bg-secondary px-3 py-2 text-xs text-secondary-foreground"
+                        }
+                      >
+                        {turn.content}
+                      </div>
                     </div>
+                    {turn.role === "user" ? <UserChatAvatar size="sm" /> : null}
                   </div>
                 ))}
               </div>

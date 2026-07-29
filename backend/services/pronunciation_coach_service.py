@@ -302,8 +302,8 @@ word correctness comes from lib/recording_engine.classify_word_status, not a tex
 
 Also carries over from the original one-shot Pronunciation Coach (US-95), preserved
 here rather than dropped when the session architecture replaced it:
-  - ACC-US-01 Live Speech Verification: playback/replay detection + account
-    suspension, run on every attempt before scoring (_check_liveness).
+  - ACC-US-01 Live Speech Verification: playback/replay detection, run on every
+    attempt before scoring (_check_liveness).
   - ACC-US-11 / ACC-US-09 Local Accent Calibration: word results are calibrated for
     the user's accent/sub-dialect preference before being classified as errors
     (_score_words).
@@ -406,28 +406,17 @@ def _rejection_message(reason: RejectionReason) -> str:
 
 
 async def _check_liveness(user_id: str, item_id: str, analysis: recording_engine.RecordingAnalysis, config) -> Optional[JSONResponse]:
-    """ACC-US-01 Live Speech Verification: suspension check + playback/replay
-    detection, shared by _submit_attempt and _retry_word so neither audio-submission
-    path in this session flow can bypass anti-cheat. Returns a 403/422 JSONResponse
-    if the submission must be rejected, else None."""
-    if await liveness_service.check_user_suspended(user_id):
-        return JSONResponse(
-            status_code=403,
-            content={"error": "Accent assessment access temporarily suspended due to repeated playback flags (3+). Account routed to support review."},
-        )
-
+    """ACC-US-01 Live Speech Verification: playback/replay detection, shared by
+    _submit_attempt and _retry_word so neither audio-submission path in this session
+    flow can bypass anti-cheat. Returns a 422 JSONResponse if the submission must be
+    rejected, else None."""
     playback_reason = recording_engine.detect_playback_audio(analysis, config)
     if playback_reason is not None:
-        flag_info = await liveness_service.record_liveness_flag(
-            user_id=user_id, item_id=item_id, prompt_token=None, reason=playback_reason.value,
-        )
         return JSONResponse(
             status_code=422,
             content=RecordingRejectedSchema(
                 reason=playback_reason.value,
                 message="Detected playback audio. Live speech required.",
-                appeal_token=flag_info["appeal_token"],
-                appeal_prompt=flag_info["appeal_prompt"],
             ).model_dump(),
         )
     return None
@@ -755,9 +744,13 @@ async def _interrupt_session(user_id: str, session_id: str) -> dict:
 
 
 async def _find_resumable_session(user_id: str) -> dict:
+    # Engagement gate: a session with zero submitted attempts is one the learner
+    # never actually practiced in (auto-started on page load, then abandoned) —
+    # nothing real to resume, so it shouldn't keep re-surfacing the resume prompt
+    # on every later visit.
     sessions = [
         s for s in await kv_store.store.list_values(NAMESPACE)
-        if s["user_id"] == user_id and s["status"] != "completed"
+        if s["user_id"] == user_id and s["status"] != "completed" and s.get("attempts") and not s.get("superseded")
     ]
     if not sessions:
         return {"found": False, "message": INTERRUPTION_MESSAGES["not_found"]}

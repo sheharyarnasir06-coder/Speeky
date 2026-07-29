@@ -38,6 +38,23 @@ BCRYPT_COST = 12
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def _auth_user(user) -> dict:
+    """Shape returned to the client on signup-verify / login / refresh. Includes
+    learningGoal so the app has the user's focus area without a second call."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "avatarUrl": user.avatarUrl,
+        "role": user.role,
+        "learningGoal": user.learningGoal,
+        "learningGoalSet": user.learningGoalSet,
+        "isConsented": user.isConsented,
+        "consentVersion": user.consentVersion,
+        "consentAcceptedAt": user.consentAcceptedAt.isoformat() if user.consentAcceptedAt else None,
+    }
+
+
 async def _issue_tokens(response: Response, user_id: str) -> None:
     access_token = sign_access_token({"sub": user_id})
     refresh_token = sign_refresh_token({"sub": user_id})
@@ -87,7 +104,7 @@ async def verify_signup_otp(payload: VerifyOtpSchema, response: Response):
 
     await _issue_tokens(response, user.id)
     response.status_code = 201
-    return {"user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role}}
+    return {"user": _auth_user(user)}
 
 
 async def resend_signup_otp(payload: ResendOtpSchema):
@@ -114,7 +131,7 @@ async def login(payload: LoginSchema, response: Response):
         return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
 
     await _issue_tokens(response, user.id)
-    return {"user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role}}
+    return {"user": _auth_user(user)}
 
 
 async def refresh(request: Request, response: Response):
@@ -146,7 +163,7 @@ async def refresh(request: Request, response: Response):
     await db.refreshtoken.update(where={"id": stored.id}, data={"revoked": True})
 
     await _issue_tokens(response, user.id)
-    return {"user": {"id": user.id, "email": user.email, "name": user.name, "role": user.role}}
+    return {"user": _auth_user(user)}
 
 
 async def logout(request: Request):

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   Headphones,
@@ -12,6 +12,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
+import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { MilestoneCelebrationModal } from "@/components/dashboard/MilestoneCelebrationModal";
 import { ApiError } from "@/lib/api";
@@ -19,6 +21,7 @@ import {
   endScenarioSession,
   getScenarioDetail,
   getScenarioSession,
+  getScenarioSessionState,
   getScenarioVoiceToken,
   sendScenarioTurn,
   startScenarioSession,
@@ -32,6 +35,7 @@ import { useAutoSpeak } from "@/lib/useAutoSpeak";
 import { stopCurrent } from "@/lib/tts";
 import { usePracticeTimePing } from "@/lib/usePracticeTimePing";
 import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
+import { cn } from "@/lib/utils";
 
 interface ChatTurn {
   role: "assistant" | "user";
@@ -119,13 +123,45 @@ export default function ScenarioSessionPage() {
       .catch(() => {});
   }, []);
 
+  const searchParams = useSearchParams();
+  const resumeSessionId = searchParams.get("resume");
+
   React.useEffect(() => {
     let cancelled = false;
-    getScenarioDetail(params.key)
-      .then((detail) => {
+
+    async function load() {
+      try {
+        const detail = await getScenarioDetail(params.key);
+        if (cancelled) return;
+
+        // ?resume=<session_id> (from the Explore resume banner / active-sessions
+        // registry) — load the in-progress conversation directly instead of the
+        // intro screen, so leaving and coming back never loses turns.
+        if (resumeSessionId) {
+          try {
+            const state = await getScenarioSessionState(resumeSessionId);
+            if (cancelled) return;
+            if (state.status === "in_progress") {
+              setStep({
+                name: "chat",
+                session: {
+                  session_id: state.session_id, scenario_key: state.scenario_key,
+                  label: detail.label, persona: detail.persona, intent: detail.intent,
+                  target_vocab: detail.target_vocab, opening_message: "",
+                },
+                turns: state.turns.map((t) => ({
+                  role: t.role === "user" ? "user" : "assistant", content: t.content,
+                })),
+              });
+              return;
+            }
+          } catch {
+            // Resume link stale/invalid (e.g. already superseded) — fall through to intro.
+          }
+        }
+
         if (!cancelled) setStep({ name: "intro", detail });
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 403) {
           setStep({ name: "locked", message: err.message });
@@ -138,11 +174,14 @@ export default function ScenarioSessionPage() {
                 : "Couldn't load this scenario.",
           });
         }
-      });
+      }
+    }
+
+    load();
     return () => {
       cancelled = true;
     };
-  }, [params.key]);
+  }, [params.key, resumeSessionId]);
 
   async function handleStart() {
     if (step.name !== "intro") return;
@@ -373,21 +412,32 @@ export default function ScenarioSessionPage() {
               <div
                 key={i}
                 className={
-                  turn.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[80%]"
+                  turn.role === "user"
+                    ? "ml-auto flex max-w-[86%] items-start gap-2"
+                    : "flex max-w-[86%] items-start gap-2"
                 }
               >
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {turn.role === "user" ? "You" : step.session.persona}
-                </span>
-                <div
-                  className={
-                    turn.role === "user"
-                      ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
-                      : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
-                  }
-                >
-                  {turn.content}
+                {turn.role === "assistant" ? <AiCoachAvatar className="mt-5" /> : null}
+                <div className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      "mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                      turn.role === "user" && "text-right",
+                    )}
+                  >
+                    {turn.role === "user" ? "You" : step.session.persona}
+                  </span>
+                  <div
+                    className={
+                      turn.role === "user"
+                        ? "rounded-xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground"
+                        : "rounded-xl rounded-tl-sm bg-secondary px-4 py-3 text-sm text-secondary-foreground"
+                    }
+                  >
+                    {turn.content}
+                  </div>
                 </div>
+                {turn.role === "user" ? <UserChatAvatar className="mt-5" /> : null}
               </div>
             ))}
           </div>
@@ -418,6 +468,7 @@ export default function ScenarioSessionPage() {
               <Button
                 size="md"
                 variant="outline"
+                className="voice-listening-button"
                 loading={isStoppingVoice}
                 onClick={() => void stopVoice()}
               >

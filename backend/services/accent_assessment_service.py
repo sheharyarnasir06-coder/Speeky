@@ -29,7 +29,6 @@ from middlewares.auth_middleware import require_auth
 from prisma.enums import AccentAssessmentStatus
 from schemas.accent_schemas import (
     AccentAssessmentResultSchema,
-    LivenessAppealResponseSchema,
     RecordingRejectedSchema,
     TargetPassageSchema,
     WeakPointSchema,
@@ -261,13 +260,6 @@ async def submit_passage_assessment(
     drill_type: Optional[str] = Form(None),
     user_id: str = Depends(require_auth),
 ):
-    # ACC-US-01 E-03: Check if account is suspended due to 3+ liveness flags
-    if await liveness_service.check_user_suspended(user_id):
-        return JSONResponse(
-            status_code=403,
-            content={"error": "Accent assessment access temporarily suspended due to repeated playback flags (3+). Account routed to support review."},
-        )
-
     # ACC-US-01 E-04: Validate prompt token (reject stale/reused prompt tokens)
     valid_token = await liveness_service.validate_and_consume_prompt_token(user_id, passage_id, prompt_token)
     if not valid_token:
@@ -297,19 +289,11 @@ async def submit_passage_assessment(
     # ACC-US-01 E-01: Signal characteristics playback check
     playback_reason = recording_engine.detect_playback_audio(analysis, config)
     if playback_reason is not None:
-        flag_info = await liveness_service.record_liveness_flag(
-            user_id=user_id,
-            item_id=passage_id,
-            prompt_token=prompt_token,
-            reason=playback_reason.value,
-        )
         return JSONResponse(
             status_code=422,
             content=RecordingRejectedSchema(
                 reason=playback_reason.value,
                 message="Detected playback audio. Live speech required for accent assessment. Accent profile was not updated.",
-                appeal_token=flag_info["appeal_token"],
-                appeal_prompt=flag_info["appeal_prompt"],
             ).model_dump(),
         )
 
@@ -418,21 +402,4 @@ async def submit_passage_assessment(
         warning=warning_notice,
         model_used=model_used,
     )
-
-
-async def submit_liveness_appeal(
-    appeal_token: str = Form(...),
-    audio: UploadFile = File(...),
-    user_id: str = Depends(require_auth),
-):
-    """E-02: Appeal secondary live-repeat prompt submission for false-positive liveness flags."""
-    config = load_speech_config()
-    audio_bytes = await audio.read()
-    try:
-        analysis = recording_engine.analyze_recording(audio_bytes, config)
-    except AudioDecodeError as e:
-        raise UnreadableAudioError(str(e))
-
-    appeal_passed, message = await liveness_service.process_appeal(user_id, appeal_token, analysis)
-    return LivenessAppealResponseSchema(appeal_passed=appeal_passed, message=message)
 

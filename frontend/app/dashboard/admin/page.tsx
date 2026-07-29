@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowRight, BellRing, FileText, FolderTree, LineChart, ShieldAlert, Users2, Wand2 } from "lucide-react";
+import { ArrowRight, BarChart3, BellRing, FileText, FolderTree, ShieldAlert, Users2, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -30,19 +30,19 @@ const CARDS: AdminHubCard[] = [
       "Manage the scenario category taxonomy learners browse by — add new categories, move scenarios between them, retire unused ones.",
   },
   {
+    href: "/dashboard/admin/analytics",
+    icon: BarChart3,
+    title: "Analytics",
+    description:
+      "Active users, retention, onboarding drop-off, feature adoption, and the growth signals that feed anomaly alerts and scheduled reports. Super Admins also see platform revenue.",
+  },
+  {
     href: "/dashboard/admin/users",
     icon: Users2,
     title: "Manage Users",
     description:
       "View every learner and admin account, promote or revoke Admin access, and transfer Super Admin ownership.",
     superAdminOnly: true,
-  },
-  {
-    href: "/dashboard/admin/analytics",
-    icon: LineChart,
-    title: "Platform Analytics",
-    description:
-      "Signups, retention, churn, and revenue trends — the shared pipeline anomaly alerts and scheduled reports both read from.",
   },
   {
     href: "/dashboard/admin/alerts",

@@ -69,17 +69,12 @@ export default function PublicSpeakingSessionPage() {
   const [qaResponse, setQaResponse] = React.useState("");
   const [qaScore, setQaScore] = React.useState<any>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [showQa, setShowQa] = React.useState(false);
 
-  // Shared LiveKit voice pipeline (same as Conversation / Baseline). The voice_agent
-  // worker transcribes and pushes text over the data channel; we accumulate it into the
-  // answer box (so nothing truncates across pauses) and measure spoken duration for WPM.
   const sessionIdRef = React.useRef<string | null>(null);
   sessionIdRef.current = sessionId;
   const voiceStartedAt = React.useRef<number | null>(null);
   const voiceDurationRef = React.useRef<number>(0);
-  // Full-mode acoustic features accumulated across VAD utterances (word timings appended,
-  // speech duration summed, prosody/level kept). Sent with the turn so the backend scores
-  // real tone/clarity instead of proxies.
   const featuresRef = React.useRef({
     has: false,
     word_timings: [] as { word: string; start: number; end: number }[],
@@ -363,7 +358,77 @@ export default function PublicSpeakingSessionPage() {
             {isSubmitting ? "Analyzing..." : "Submit for Analysis"}
           </Button>
         </div>
-      ) : !qaQuestion ? (
+      ) : qaQuestion && showQa ? (
+        !qaScore ? (
+          <div className="flex flex-col gap-6 rounded-2xl border border-border bg-surface-elevated p-6">
+            <div>
+              <h2 className="font-semibold text-foreground">Audience Q&A</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                An audience member has a follow-up question. Respond impromptu.
+              </p>
+            </div>
+
+            <div className="rounded-lg bg-secondary/20 p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-white shrink-0">
+                  ?
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">Question</div>
+                  <p className="mt-1 text-sm text-foreground">{qaQuestion}</p>
+                </div>
+              </div>
+            </div>
+
+            <Textarea
+              label="Your response"
+              value={qaResponse}
+              onChange={(e) => setQaResponse(e.target.value)}
+              placeholder="Type your response..."
+              rows={5}
+            />
+
+            <Button
+              onClick={handleSubmitQaResponse}
+              disabled={isSubmitting || !qaResponse.trim()}
+              className="w-full"
+            >
+              {isSubmitting ? "Evaluating..." : "Submit Response"}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-6 rounded-2xl border border-border bg-surface-elevated p-6">
+            <div className="flex items-center gap-3">
+              <CheckCircle className="h-8 w-8 text-success" />
+              <div>
+                <h2 className="font-semibold text-foreground">Q&A Evaluation</h2>
+                <p className="text-sm text-muted-foreground">
+                  Here's how you handled the audience question.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <ScoreCard label="Composure" score={qaScore.composure} />
+              <ScoreCard label="Relevance" score={qaScore.relevance} />
+            </div>
+
+            <div className="rounded-lg bg-secondary/20 p-4">
+              <div className="flex items-start gap-3">
+                <Lightbulb className="mt-0.5 h-5 w-5 text-primary shrink-0" />
+                <div>
+                  <div className="font-medium text-foreground">Feedback</div>
+                  <p className="mt-1 text-sm text-muted-foreground">{qaScore.feedback}</p>
+                </div>
+              </div>
+            </div>
+
+            <Button onClick={() => router.push("/dashboard/public-speaking")} className="w-full">
+              Back to Public Speaking Coach
+            </Button>
+          </div>
+        )
+      ) : (
         <div className="flex flex-col gap-6 rounded-2xl border border-border bg-surface-elevated p-6">
           <div className="flex items-center gap-3">
             <CheckCircle className="h-8 w-8 text-success" />
@@ -418,77 +483,15 @@ export default function PublicSpeakingSessionPage() {
             </div>
           )}
 
-          <Button onClick={() => router.push("/dashboard/public-speaking")} className="w-full">
-            Try Another Speech Type
-          </Button>
-        </div>
-      ) : !qaScore ? (
-        <div className="flex flex-col gap-6 rounded-2xl border border-border bg-surface-elevated p-6">
-          <div>
-            <h2 className="font-semibold text-foreground">Audience Q&A</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              An audience member has a follow-up question. Respond impromptu.
-            </p>
-          </div>
-
-          <div className="rounded-lg bg-secondary/20 p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-white shrink-0">
-                ?
-              </div>
-              <div>
-                <div className="font-medium text-foreground">Question</div>
-                <p className="mt-1 text-sm text-foreground">{qaQuestion}</p>
-              </div>
-            </div>
-          </div>
-
-          <Textarea
-            label="Your response"
-            value={qaResponse}
-            onChange={(e) => setQaResponse(e.target.value)}
-            placeholder="Type your response..."
-            rows={5}
-          />
-
-          <Button
-            onClick={handleSubmitQaResponse}
-            disabled={isSubmitting || !qaResponse.trim()}
-            className="w-full"
-          >
-            {isSubmitting ? "Evaluating..." : "Submit Response"}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-6 rounded-2xl border border-border bg-surface-elevated p-6">
-          <div className="flex items-center gap-3">
-            <CheckCircle className="h-8 w-8 text-success" />
-            <div>
-              <h2 className="font-semibold text-foreground">Q&A Evaluation</h2>
-              <p className="text-sm text-muted-foreground">
-                Here's how you handled the audience question.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <ScoreCard label="Composure" score={qaScore.composure} />
-            <ScoreCard label="Relevance" score={qaScore.relevance} />
-          </div>
-
-          <div className="rounded-lg bg-secondary/20 p-4">
-            <div className="flex items-start gap-3">
-              <Lightbulb className="mt-0.5 h-5 w-5 text-primary shrink-0" />
-              <div>
-                <div className="font-medium text-foreground">Feedback</div>
-                <p className="mt-1 text-sm text-muted-foreground">{qaScore.feedback}</p>
-              </div>
-            </div>
-          </div>
-
-          <Button onClick={() => router.push("/dashboard/public-speaking")} className="w-full">
-            Back to Public Speaking Coach
-          </Button>
+          {qaQuestion ? (
+            <Button onClick={() => setShowQa(true)} className="w-full">
+              Continue to Audience Q&A
+            </Button>
+          ) : (
+            <Button onClick={() => router.push("/dashboard/public-speaking")} className="w-full">
+              Try Another Speech Type
+            </Button>
+          )}
         </div>
       )}
     </div>

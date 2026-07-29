@@ -29,7 +29,7 @@ from fastapi import Depends
 from fastapi.responses import JSONResponse
 from prisma import Json
 
-from lib import livekit_tokens, llm_client, prompts
+from lib import explore_sessions, livekit_tokens, llm_client, prompts
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin, require_auth
 from schemas.scenario_schemas import (
@@ -348,6 +348,12 @@ async def start_session(payload: StartScenarioSchema, user_id: str = Depends(req
         return JSONResponse(status_code=400, content={"error": "Unknown scenario"})
     if meta.get("status") == "ARCHIVED":
         return JSONResponse(status_code=400, content={"error": "This scenario is no longer available"})
+
+    # A fresh start supersedes any other open Explore-group session (conversation,
+    # scenario, coaching, interview coach) this user still has running elsewhere —
+    # the Explore page's resume banner is what lets them avoid hitting this path
+    # by accident; this is what "start something new anyway" relies on.
+    await explore_sessions.supersede_open_explore_sessions(user_id)
 
     opening = await _roleplay_opening(payload.scenario_key, meta)
     session = await db.scenariosession.create(

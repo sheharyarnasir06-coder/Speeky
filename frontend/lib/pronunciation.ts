@@ -36,14 +36,12 @@ export interface AttemptResult {
   model_used?: string | null;
 }
 
-// Structured rejection body (422/403) for ACC-US-01 liveness/playback-audio checks —
+// Structured rejection body (422) for ACC-US-01 liveness/playback-audio checks —
 // same shape the one-shot Pronunciation Coach and Accent Assessment both return.
 export interface RecordingRejected {
   status: "rejected";
   reason: string;
   message: string;
-  appeal_token?: string | null;
-  appeal_prompt?: string | null;
 }
 
 export interface RetryResult {
@@ -163,7 +161,7 @@ export async function fetchPronunciationTts(
   return response.blob();
 }
 
-/** Reads the structured RecordingRejectedSchema body off a 422/403 ApiError, if present. */
+/** Reads the structured RecordingRejectedSchema body off a 422 ApiError, if present. */
 export function rejectionFromError(err: unknown): RecordingRejected | null {
   if (!(err instanceof ApiError) || !err.body || typeof err.body !== "object") {
     return null;
@@ -174,7 +172,5 @@ export function rejectionFromError(err: unknown): RecordingRejected | null {
     status: "rejected",
     reason: body.reason,
     message: body.message,
-    appeal_token: body.appeal_token ?? null,
-    appeal_prompt: body.appeal_prompt ?? null,
   };
 }

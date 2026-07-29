@@ -8,6 +8,7 @@ import { cn, getInitials } from "@/lib/utils";
 import { DASHBOARD_NAV_LINKS } from "@/lib/dashboard-data";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
+import { useActiveSessions } from "@/contexts/ActiveSessionsContext";
 import { API_ORIGIN } from "@/lib/api";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -20,6 +21,15 @@ export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
   const { access } = useAssessmentAccess();
+  const { explore, publicSpeaking, pronunciation } = useActiveSessions();
+
+  // Resumable-session dot — grouped per nav link so a user can tell, without
+  // opening each section, that leaving mid-session didn't just silently lose it.
+  const RESUMABLE_HREFS: Record<string, boolean> = {
+    "/dashboard/explore": Boolean(explore?.active),
+    "/dashboard/pronunciation": Boolean(pronunciation?.found),
+    "/dashboard/public-speaking": Boolean(publicSpeaking?.found),
+  };
 
   // Persistent entry to the baseline assessment for anyone who hasn't completed it.
   // Without this the ONLY path was the throttled AssessmentReminderBanner overlay, which
@@ -58,20 +68,29 @@ export function Sidebar() {
         {DASHBOARD_NAV_LINKS.map((link) => {
           const isActive = pathname === link.href;
           const Icon = link.icon;
+          const hasResumable = RESUMABLE_HREFS[link.href];
           return (
             <Link
               key={link.href}
               href={link.href}
-              aria-label={link.label}
-              title={link.label}
+              aria-label={hasResumable ? `${link.label} — unfinished session to resume` : link.label}
+              title={hasResumable ? `${link.label} — unfinished session to resume` : link.label}
               className={cn(
-                "flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
+                "relative flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
                 isActive
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-surface hover:text-foreground",
               )}
             >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="relative shrink-0">
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                {hasResumable ? (
+                  <span
+                    className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-warning"
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </span>
               <span className="hidden lg:inline">{link.label}</span>
             </Link>
           );

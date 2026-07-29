@@ -26,6 +26,7 @@ from middlewares.error_handler import (
     validation_error_handler,
 )
 from routers.accent_progress_routes import router as accent_progress_router
+from routers.active_session_routes import router as active_session_router
 from routers.alert_routes import router as alert_router
 from routers.analytics_routes import router as analytics_router
 from routers.auth_routes import router as auth_router
@@ -100,6 +101,8 @@ async def health():
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(user_router, prefix="/api/users")
 app.include_router(category_router, prefix="/api/categories")
+app.include_router(analytics_router, prefix="/api/analytics")
+app.include_router(active_session_router, prefix="/api/active-sessions")
 app.include_router(assessment_router, prefix="/api/assessment")
 app.include_router(coaching_router, prefix="/api/coaching")
 app.include_router(conversation_router, prefix="/api/conversation")
@@ -125,7 +128,6 @@ app.include_router(rewrite_vocab_router, prefix="/api/rewrite-vocab")
 app.include_router(script_practice_router, prefix="/api/script-practice")
 app.include_router(alert_router, prefix="/api/alerts")
 app.include_router(report_router, prefix="/api/reports")
-app.include_router(analytics_router, prefix="/api/analytics")
 
 # Local-folder avatar storage, exposed to frontend as static files
 _uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")

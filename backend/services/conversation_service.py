@@ -40,6 +40,7 @@ from fastapi.responses import JSONResponse, Response
 
 from lib import (
     ai_client,
+    explore_sessions,
     grammar_checker,
     kv_store,
     livekit_tokens,
@@ -309,6 +310,10 @@ async def _start_session(user_id: str, req: StartConversationSchema) -> Dict:
     elif req.topic_key not in prompts.TOPICS:
         raise InvalidSubmissionError(f"Unknown topic_key. Valid: {list(prompts.TOPICS)}")
 
+    # A fresh start supersedes any other open Explore-group session this user has
+    # running elsewhere — see lib/explore_sessions.py.
+    await explore_sessions.supersede_open_explore_sessions(user_id)
+
     level, level_source, stale_warning = await _resolve_level(user_id, req.level_override)
 
     session_id = _new_id("conv")
@@ -389,6 +394,17 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
         "duration_seconds": req.audio_features.duration_seconds if req.audio_features else 0.0,
         "word_timings": req.audio_features.word_timings if req.audio_features else [],
     })
+
+    # PDG-US-11: if this session was started via the Daily Challenge redirect, this is
+    # what starts that challenge's 5-minute timer (first prompt only — a no-op on later
+    # turns or on sessions with no linked challenge). Best-effort: a daily-challenge
+    # bookkeeping failure must never break sending a conversation message.
+    try:
+        from services.daily_challenge_service import on_conversation_prompt
+
+        await on_conversation_prompt(user_id, session_id, now)
+    except Exception as exc:
+        logger.warning("Daily Challenge prompt-timer update failed silently: %s", exc)
 
     if session_ended:
         reply = "Let's pause here for now — thanks for practicing today."

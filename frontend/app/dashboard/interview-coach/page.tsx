@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Sparkles, Trash2, Users } from "lucide-react";
+import { History, Plus, Sparkles, Trash2, Users, X } from "lucide-react";
+import { toast } from "react-toastify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,8 @@ import {
   type PersonaTone,
 } from "@/lib/interviewCoach";
 import { getPersonalizedOpening } from "@/lib/sessionMemory";
+import { useActiveSessions } from "@/contexts/ActiveSessionsContext";
+import { dismissOpenExploreSession } from "@/lib/activeSessions";
 
 const MODES: { id: InterviewMode; label: string; description: string }[] = [
   { id: "standard", label: "Standard", description: "One-on-one behavioral interview." },
@@ -37,7 +40,10 @@ const CASE_TYPES = [
 
 export default function InterviewCoachSetupPage() {
   const router = useRouter();
+  const { explore, refresh: refreshActiveSessions } = useActiveSessions();
   const [greeting, setGreeting] = React.useState<string | null>(null);
+  const [isDismissingResume, setIsDismissingResume] = React.useState(false);
+  const [resumeDismissed, setResumeDismissed] = React.useState(false);
 
   const [mode, setMode] = React.useState<InterviewMode>("standard");
   const [roleOrMajor, setRoleOrMajor] = React.useState("");
@@ -57,6 +63,19 @@ export default function InterviewCoachSetupPage() {
       .then((data) => setGreeting(data.opening_message))
       .catch(() => {});
   }, []);
+
+  async function handleDismissResume() {
+    setIsDismissingResume(true);
+    try {
+      await dismissOpenExploreSession();
+      setResumeDismissed(true);
+      refreshActiveSessions().catch(() => {});
+    } catch {
+      toast.error("Couldn't dismiss this session.");
+    } finally {
+      setIsDismissingResume(false);
+    }
+  }
 
   function addPanelist() {
     if (panelists.length >= 3) return;
@@ -125,6 +144,29 @@ export default function InterviewCoachSetupPage() {
           Practice behavioral, panel, and case-study interviews with an AI interviewer.
         </p>
       </div>
+
+      {explore?.active && explore.feature === "interview_coach" && !resumeDismissed ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground">
+          <div className="flex items-start gap-2.5">
+            <History className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            You have an unfinished {explore.label ?? "interview"} — starting a new one below will end it.
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" href={explore.resume_path ?? "/dashboard/interview-coach"}>
+              Resume
+            </Button>
+            <button
+              type="button"
+              onClick={handleDismissResume}
+              disabled={isDismissingResume}
+              aria-label="Dismiss — ends the unfinished session"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-surface hover:text-foreground disabled:opacity-50"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {greeting ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-border bg-secondary px-4 py-3 text-sm text-secondary-foreground">

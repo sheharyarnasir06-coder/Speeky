@@ -13,13 +13,16 @@ import {
   endSession,
   interruptSession,
   resumeSession,
+  retryWord,
   startPronunciationSession,
   submitAttempt,
   type AttemptResult,
   type PronunciationSession,
   type ResumeCheck,
+  type RetryResult,
   type SessionSummary,
 } from "@/lib/pronunciation";
+import { useActiveSessions } from "@/contexts/ActiveSessionsContext";
 
 type Step =
   | { name: "loading" }
@@ -44,6 +47,7 @@ const NEGATIVE_MESSAGE_KEYS = new Set([
 export default function PronunciationCoachPage() {
   const { access } = useAssessmentAccess();
   const isUnlocked = access?.access_level === "full_access";
+  const { refresh: refreshActiveSessions } = useActiveSessions();
 
   const [step, setStep] = React.useState<Step>({ name: "loading" });
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -52,6 +56,13 @@ export default function PronunciationCoachPage() {
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Pronunciation Coach",
   });
+
+  // ── Retry-a-single-word state (US-89) ───────────────────────────────────
+  const [retryTarget, setRetryTarget] = React.useState<string | null>(null);
+  const [retryResult, setRetryResult] = React.useState<RetryResult | null>(null);
+  const [retrySubmitting, setRetrySubmitting] = React.useState(false);
+  const [retryError, setRetryError] = React.useState<string | null>(null);
+  const retryRecorder = useAudioRecorder();
 
   const activeSessionRef = React.useRef<{ sessionId: string; completed: boolean } | null>(null);
 
@@ -118,6 +129,8 @@ export default function PronunciationCoachPage() {
           message: resumed.message,
         },
       });
+      // Sidebar dot reflects resumed (still active) session — refresh to sync.
+      refreshActiveSessions().catch(() => {});
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't resume that session.");
     } finally {
@@ -132,6 +145,8 @@ export default function PronunciationCoachPage() {
       const session = await startPronunciationSession();
       activeSessionRef.current = { sessionId: session.session_id, completed: false };
       setStep({ name: "practice", session });
+      // Old session superseded — sidebar dot should clear (new session has no attempts yet).
+      refreshActiveSessions().catch(() => {});
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't start a new session.");
     } finally {
@@ -145,6 +160,9 @@ export default function PronunciationCoachPage() {
     setIsSubmitting(true);
     try {
       const result = await submitAttempt(step.session.session_id, audio);
+      setRetryTarget(null);
+      setRetryResult(null);
+      setRetryError(null);
       setStep({ name: "attempt-result", session: step.session, result });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
@@ -162,6 +180,39 @@ export default function PronunciationCoachPage() {
     }
   }
 
+  // ── Retry-a-single-word handlers (US-89) ────────────────────────────────
+  function handleSelectRetryWord(word: string) {
+    setRetryTarget(word);
+    setRetryResult(null);
+    setRetryError(null);
+  }
+
+  async function handleSubmitRetry() {
+    if (step.name !== "attempt-result" || !retryTarget) return;
+    setRetryError(null);
+    setRetrySubmitting(true);
+    try {
+      const audio = await retryRecorder.stop();
+      if (!audio) return;
+      const result = await retryWord(step.session.session_id, retryTarget, audio);
+      setRetryResult(result);
+    } catch (err) {
+      setRetryError(err instanceof ApiError ? err.message : "Couldn't score that retry.");
+    } finally {
+      setRetrySubmitting(false);
+    }
+  }
+
+  async function handleRetryRecordToggle() {
+    if (retryRecorder.isRecording) {
+      await handleSubmitRetry();
+    } else {
+      setRetryResult(null);
+      setRetryError(null);
+      await retryRecorder.start();
+    }
+  }
+
   function handleContinue() {
     if (step.name !== "attempt-result") return;
     const { session, result } = step;
@@ -172,6 +223,9 @@ export default function PronunciationCoachPage() {
       phoneme_tag: result.next_phoneme_tag ?? session.phoneme_tag,
       message: undefined,
     };
+    setRetryTarget(null);
+    setRetryResult(null);
+    setRetryError(null);
     setStep({ name: "practice", session: nextSession });
   }
 
@@ -341,19 +395,86 @@ export default function PronunciationCoachPage() {
         {result.words.length > 0 ? (
           <div className="rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm">
             <h2 className="font-serif text-lg font-semibold text-foreground">Word by word</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Tap a red word to practice just that word.</p>
             <div className="mt-4 flex flex-wrap gap-2">
-              {result.words.map((w, i) => (
-                <span
-                  key={`${w.word}-${i}`}
-                  className={cn(
-                    "rounded-full px-3 py-1 text-sm font-medium",
-                    w.status === "correct" ? "bg-success/15 text-success" : "bg-danger/15 text-danger",
-                  )}
-                >
-                  {w.word}
-                </span>
-              ))}
+              {result.words.map((w, i) => {
+                const isWrong = w.status !== "correct";
+                return (
+                  <button
+                    key={`${w.word}-${i}`}
+                    type="button"
+                    disabled={!isWrong}
+                    onClick={() => isWrong && handleSelectRetryWord(w.word)}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-sm font-medium transition-all",
+                      w.status === "correct"
+                        ? "cursor-default bg-success/15 text-success"
+                        : "cursor-pointer bg-danger/15 text-danger hover:bg-danger/25",
+                      retryTarget === w.word && isWrong ? "ring-2 ring-danger ring-offset-1" : "",
+                    )}
+                  >
+                    {w.word}
+                  </button>
+                );
+              })}
             </div>
+
+            {retryTarget ? (
+              <div className="mt-5 rounded-xl border border-border bg-surface p-4">
+                <p className="text-sm font-medium text-foreground">
+                  Retry word: <span className="text-primary">{retryTarget}</span>
+                </p>
+                {retryRecorder.error ? (
+                  <p className="mt-2 text-sm text-danger">{retryRecorder.error}</p>
+                ) : null}
+                {retryError ? <p className="mt-2 text-sm text-danger">{retryError}</p> : null}
+
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={!retryRecorder.isSupported || retrySubmitting || retryRecorder.state === "stopping"}
+                    onClick={handleRetryRecordToggle}
+                    aria-pressed={retryRecorder.isRecording}
+                    className={cn(
+                      "flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-primary-foreground shadow-md transition-all duration-200 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50",
+                      retryRecorder.isRecording ? "animate-pulse bg-danger" : "bg-primary hover:bg-primary-hover",
+                    )}
+                    aria-label={retryRecorder.isRecording ? "Stop and submit retry" : `Record retry for ${retryTarget}`}
+                  >
+                    {retryRecorder.isRecording ? (
+                      <Square className="h-4 w-4" aria-hidden="true" />
+                    ) : (
+                      <Mic className="h-5 w-5" aria-hidden="true" />
+                    )}
+                  </button>
+                  <p className="text-sm text-muted-foreground">
+                    {retryRecorder.state === "stopping"
+                      ? "Scoring..."
+                      : retryRecorder.isRecording
+                        ? "Recording — tap to stop and submit."
+                        : `Tap the mic and say "${retryTarget}".`}
+                  </p>
+                </div>
+
+                {retryResult ? (
+                  <div
+                    className={cn(
+                      "mt-3 rounded-lg p-3 text-sm",
+                      retryResult.frustration_breakdown
+                        ? "bg-warning/10 text-foreground"
+                        : "bg-success/10 text-success",
+                    )}
+                  >
+                    <p>{retryResult.message}</p>
+                    {retryResult.transcript ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        We heard: &quot;{retryResult.transcript}&quot;
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
