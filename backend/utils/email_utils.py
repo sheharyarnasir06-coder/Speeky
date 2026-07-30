@@ -1,7 +1,15 @@
 import os
 from email.message import EmailMessage
+from html import escape
+from io import BytesIO
+from pathlib import Path
 
 import aiosmtplib
+from PIL import Image
+
+
+INLINE_LOGO_CID = "speeky-logo"
+PREVIEW_PADDING = "&zwnj;&nbsp;" * 120
 
 
 def _get_transport_config() -> dict:
@@ -20,125 +28,237 @@ def _get_transport_config() -> dict:
     }
 
 
+def _local_logo_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "frontend" / "public" / "logo-icon.png"
+
+
+def _use_inline_logo() -> bool:
+    return not os.environ.get("EMAIL_LOGO_URL", "").strip() and _local_logo_path().exists()
+
+
+def _render_white_logo_bytes() -> bytes:
+    with Image.open(_local_logo_path()).convert("RGBA") as image:
+        alpha = image.getchannel("A")
+        white_logo = Image.new("RGBA", image.size, (255, 255, 255, 0))
+        white_logo.putalpha(alpha)
+
+        output = BytesIO()
+        white_logo.save(output, format="PNG")
+        return output.getvalue()
+
+
+def _attach_inline_logo(msg: EmailMessage) -> None:
+    if not _use_inline_logo():
+        return
+
+    try:
+        html_part = msg.get_payload()[-1]
+        html_part.add_related(
+            _render_white_logo_bytes(),
+            maintype="image",
+            subtype="png",
+            cid=f"<{INLINE_LOGO_CID}>",
+        )
+    except Exception:
+        # Logo rendering should never block transactional email delivery.
+        pass
+
+
 def _render_template(heading: str, body_html: str) -> str:
-    """Generic business email shell shared by every transactional email."""
+    """Speeky-branded transactional email shell shared by every email."""
+    logo_url = os.environ.get("EMAIL_LOGO_URL", "").strip()
+    logo_src = f"cid:{INLINE_LOGO_CID}" if _use_inline_logo() else logo_url
+    logo_html = (
+        f'<img src="{escape(logo_src, quote=True)}" alt="" class="logo">'
+        if logo_src
+        else ""
+    )
+    logo_cell_html = (
+        f'<td class="logo-cell">{logo_html}</td>'
+        if logo_html
+        else ""
+    )
+    fallback_brand_class = "" if logo_html else " brand-without-logo"
+
     return f"""
     <!DOCTYPE html>
     <html>
     <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
+            .preheader {{
+                display: none !important;
+                visibility: hidden;
+                opacity: 0;
+                color: transparent;
+                height: 0;
+                width: 0;
+                max-height: 0;
+                max-width: 0;
+                overflow: hidden;
+                mso-hide: all;
+            }}
             body {{
-                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-                background-color: #f8f9fa;
-                color: #1a1a1a;
+                font-family: Inter, 'Segoe UI', Arial, sans-serif;
+                background-color: #eef5f7;
+                color: #071821;
                 margin: 0;
                 padding: 0;
                 -webkit-font-smoothing: antialiased;
             }}
             .wrapper {{
                 width: 100%;
-                background-color: #f8f9fa;
-                padding: 40px 0;
+                background: #eef5f7;
+                padding: 48px 16px;
             }}
             .container {{
                 max-width: 600px;
                 margin: 0 auto;
                 background-color: #ffffff;
-                border-radius: 8px;
-                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+                border-radius: 24px;
+                box-shadow: 0 20px 60px rgba(5, 33, 46, 0.12);
                 overflow: hidden;
-                border-top: 4px solid #1a3673;
+                border: 1px solid #d5e5eb;
             }}
             .header {{
-                padding: 40px 30px 20px;
-                text-align: center;
-                border-bottom: 1px solid #e9ecef;
+                background: #071821;
+                padding: 30px 36px;
+                text-align: left;
+            }}
+            .brand-row {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .logo-cell {{
+                width: 58px;
+                vertical-align: middle;
+                padding: 0 16px 0 0;
+            }}
+            .brand-cell {{
+                vertical-align: middle;
+                padding: 0;
+            }}
+            .brand {{
+                color: #ffffff;
+                font-family: Georgia, 'Times New Roman', serif;
+                font-size: 28px;
+                font-weight: 700;
+                line-height: 1.1;
+                margin: 0;
+                letter-spacing: -0.5px;
+            }}
+            .brand-without-logo {{
+                text-align: left;
             }}
             .logo {{
-                max-width: 150px;
-                height: auto;
+                display: block;
+                width: 46px;
+                height: 46px;
+                margin: 0;
+            }}
+            .tagline {{
+                color: #9edce8;
+                font-size: 13px;
+                letter-spacing: 1.8px;
+                margin: 5px 0 0;
+                text-transform: uppercase;
             }}
             .content {{
-                padding: 40px 40px 30px;
+                padding: 42px 42px 34px;
             }}
             .content h2 {{
-                color: #1a3673;
-                font-size: 22px;
+                color: #071821;
+                font-family: Georgia, 'Times New Roman', serif;
+                font-size: 28px;
+                line-height: 1.2;
                 margin-top: 0;
-                margin-bottom: 20px;
-                font-weight: 600;
+                margin-bottom: 16px;
+                font-weight: 700;
+                letter-spacing: -0.4px;
             }}
             .content p {{
                 font-size: 16px;
                 line-height: 1.6;
-                color: #4a4a4a;
-                margin-bottom: 20px;
+                color: #476173;
+                margin: 0 0 18px;
             }}
             .button-container {{
                 text-align: center;
-                margin: 35px 0;
+                margin: 34px 0;
             }}
             .button {{
                 display: inline-block;
                 padding: 14px 32px;
-                background-color: #1a3673;
-                color: #ffffff !important;
+                background-color: #55c7dc;
+                color: #071821 !important;
                 text-decoration: none;
-                border-radius: 4px;
-                font-weight: 600;
+                border-radius: 999px;
+                font-weight: 700;
                 font-size: 16px;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.1px;
             }}
             .otp-code {{
                 text-align: center;
-                margin: 35px 0;
-                font-size: 36px;
-                font-weight: 700;
-                letter-spacing: 8px;
-                color: #1a3673;
-                background-color: #f4f6f9;
-                padding: 20px;
-                border-radius: 4px;
+                margin: 34px 0;
+                font-size: 40px;
+                line-height: 1;
+                font-weight: 800;
+                letter-spacing: 10px;
+                color: #07556b;
+                background: #e5f8fc;
+                padding: 24px 18px;
+                border-radius: 18px;
+                border: 1px solid #bdebf4;
             }}
             .security-notice {{
-                background-color: #f4f6f9;
-                border-left: 4px solid #c0392b;
-                padding: 15px 20px;
-                margin-top: 30px;
-                border-radius: 0 4px 4px 0;
+                background-color: #f6fafb;
+                border: 1px solid #dbe9ee;
+                padding: 16px 18px;
+                margin-top: 28px;
+                border-radius: 16px;
             }}
             .security-notice p {{
                 margin: 0;
                 font-size: 14px;
-                color: #555555;
+                color: #516879;
             }}
             .footer {{
-                background-color: #f8f9fa;
-                padding: 30px 40px;
+                background-color: #f6fafb;
+                padding: 28px 40px;
                 text-align: center;
-                border-top: 1px solid #e9ecef;
+                border-top: 1px solid #dbe9ee;
             }}
             .footer p {{
                 font-size: 13px;
-                color: #888888;
+                color: #78909c;
                 margin: 5px 0;
                 line-height: 1.5;
             }}
             .link-fallback {{
                 margin-top: 25px;
                 padding-top: 20px;
-                border-top: 1px dashed #e9ecef;
+                border-top: 1px dashed #d5e5eb;
                 font-size: 14px;
-                color: #666666;
+                color: #5f7888;
                 word-break: break-all;
             }}
         </style>
     </head>
     <body>
+        <div class="preheader">Open this email to view your Speeky verification code. It expires soon and should never be shared.{PREVIEW_PADDING}</div>
         <div class="wrapper">
             <div class="container">
                 <div class="header">
-                    <img src="https://i.pinimg.com/736x/55/4c/6c/554c6cf1a4954619965be76b7d1163cc.jpg" alt="Speeky AI Logo" class="logo">
+                    <table class="brand-row" role="presentation" cellpadding="0" cellspacing="0">
+                        <tr>
+                            {logo_cell_html}
+                            <td class="brand-cell{fallback_brand_class}">
+                                <p class="brand">Speeky</p>
+                                <p class="tagline">AI Communication Coach</p>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
                 <div class="content">
                     <h2>{heading}</h2>
@@ -146,7 +266,7 @@ def _render_template(heading: str, body_html: str) -> str:
                 </div>
                 <div class="footer">
                     <p>If you did not request this, please ignore this email or contact support if you have concerns.</p>
-                    <p>&copy; Speeky AI - Assisted English Language Practice</p>
+                    <p>&copy; Speeky AI - Private speaking practice, made calmer.</p>
                 </div>
             </div>
         </div>
@@ -164,6 +284,7 @@ async def _send_email(to: str, subject: str, heading: str, body_html: str, text_
     msg["Subject"] = subject
     msg.set_content(text_body)
     msg.add_alternative(_render_template(heading, body_html), subtype="html")
+    _attach_inline_logo(msg)
 
     await aiosmtplib.send(
         msg,
@@ -180,8 +301,8 @@ async def send_otp_email(to: str, code: str) -> None:
     ttl = os.environ.get("OTP_TTL_MINUTES", "10")
 
     body_html = f"""
-    <p>Hello,</p>
-    <p>Use the verification code below to complete your Speeky AI signup.</p>
+    <p>You&apos;re one step away from starting your private speaking practice.</p>
+    <p>Use this verification code to finish creating your Speeky account.</p>
     <div class="otp-code">{code}</div>
     <div class="security-notice">
         <p><strong>Note:</strong> This code expires in <strong>{ttl} minutes</strong>. Never share it with anyone.</p>
@@ -190,12 +311,13 @@ async def send_otp_email(to: str, code: str) -> None:
 
     await _send_email(
         to=to,
-        subject="Your Speeky AI verification code",
-        heading="Verify Your Email",
+        subject="Your Speeky verification code",
+        heading="Verify your Speeky account",
         body_html=body_html,
         text_body=(
-            f"Your Speeky AI verification code is: {code}\n\n"
-            f"This code expires in {ttl} minutes. Never share it with anyone."
+            "Open this email to view your Speeky verification code.\n\n"
+            f"For your security, the code is only shown inside the formatted email. "
+            f"It expires in {ttl} minutes and should never be shared."
         ),
     )
 
@@ -221,8 +343,9 @@ async def send_email_change_otp(to: str, code: str) -> None:
         heading="Confirm Your New Email",
         body_html=body_html,
         text_body=(
-            f"Your Speeky AI email-change verification code is: {code}\n\n"
-            f"This code expires in {ttl} minutes. Your current email stays active until "
+            "Open this email to view your Speeky email-change verification code.\n\n"
+            f"For your security, the code is only shown inside the formatted email. "
+            f"It expires in {ttl} minutes. Your current email stays active until "
             "this is confirmed. Never share it with anyone."
         ),
     )
