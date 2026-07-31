@@ -1,6 +1,6 @@
 """Public Speaking Coach Routes — PSC-US-01, PSC-US-03, PSC-US-04, PSC-US-05, PSC-US-06, PSC-US-07, PSC-US-11, PSC-US-12, PSC-US-14"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, WebSocket
 
 from middlewares.auth_middleware import require_auth
 from schemas.public_speaking_schemas import (
@@ -13,7 +13,7 @@ from services.public_speaking_service import (
     submit_turn,
     submit_qa_response,
     get_session,
-    get_voice_token,
+    voice_socket,
     get_filler_words_for_session,
     find_resumable_session,
 )
@@ -59,13 +59,9 @@ async def api_submit_qa_response(
     return await submit_qa_response(session_id, user_id, response)
 
 
-@router.post("/{session_id}/voice-token")
-async def api_voice_token(
-    session_id: str,
-    user_id: str = Depends(require_auth),
-):
-    """Mint a LiveKit room token for a spoken turn (shared voice pipeline)."""
-    return await get_voice_token(session_id, user_id)
+@router.websocket("/{session_id}/voice-ws")
+async def api_voice_socket(websocket: WebSocket, session_id: str):
+    await voice_socket(websocket, session_id)
 
 
 @router.get("/{session_id}")

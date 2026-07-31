@@ -100,6 +100,119 @@ export interface RevenueResult {
   cohort_retention: CohortRetentionRow[];
 }
 
+// ── US-205 Audit Log Types ──────────────────────────────────────────────────
+export interface AuditLogEntry {
+  id: string;
+  actor_id: string;
+  actor_role: string;
+  timestamp: string;
+  action_type: string;
+  module: string;
+  scope: Record<string, unknown>;
+  prev_hash: string;
+  entry_hash: string;
+}
+
+export interface AuditLogListResponse {
+  entries: AuditLogEntry[];
+  total: number;
+  tamper_detected: boolean;
+}
+
+export interface AuditLogVerifyResponse {
+  chain_intact: boolean;
+  checked_at: string;
+}
+
+export interface ExportDataResponse {
+  export_id: string;
+  module: string;
+  scope: Record<string, unknown>;
+  content: string;
+  audit_entry_id: string;
+  timestamp: string;
+}
+
+// ── US-206 Custom Dashboard Views Types ─────────────────────────────────────
+export interface DashboardWidgetConfig {
+  id: string;
+  position?: number;
+  settings?: Record<string, unknown>;
+}
+
+export interface SavedViewCreateRequest {
+  name: string;
+  widgets: DashboardWidgetConfig[];
+  filters?: Record<string, unknown>;
+  is_shared?: boolean;
+  overwrite?: boolean;
+}
+
+export interface SavedViewResponse {
+  id: string;
+  user_id: string;
+  name: string;
+  widgets: Array<Record<string, unknown>>;
+  filters: Record<string, unknown>;
+  is_shared: boolean;
+  warnings: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedViewListResponse {
+  views: SavedViewResponse[];
+}
+
+// ── US-207 Cross-Source Data Reconciliation Types ────────────────────────────
+export interface MismatchedItem {
+  user_id: string;
+  delta: number;
+  renewal_at?: string | null;
+  transaction_id?: string;
+  [key: string]: unknown;
+}
+
+export interface ReconciliationProviderResult {
+  provider: string;
+  internal_count: number;
+  internal_revenue: number;
+  provider_count: number;
+  provider_revenue: number;
+  variance_pct: number;
+  status: string; // "RECONCILED" | "DISCREPANCY_DETECTED" | "RECONCILIATION_PENDING"
+  grace_applied_count: number;
+  mismatched_items: MismatchedItem[];
+}
+
+export interface ReconciliationSummaryResponse {
+  status: string; // "RECONCILED" | "DISCREPANCY_DETECTED" | "RECONCILIATION_PENDING"
+  computed_at: string;
+  tolerance_pct: number;
+  providers: Record<string, ReconciliationProviderResult>;
+  pending: boolean;
+  retry_count: number;
+  message?: string | null;
+}
+
+export interface TargetedResyncRequest {
+  user_id: string;
+  transaction_id: string;
+  provider: string;
+  reason?: string;
+}
+
+export interface TargetedResyncResponse {
+  resynced: boolean;
+  user_id: string;
+  transaction_id: string;
+  provider: string;
+  updated_internal_revenue: number;
+  message: string;
+}
+
+// ── Analytics Core API Calls ─────────────────────────────────────────────────
+
 export function getOverview(days: number) {
   return api<OverviewResult>(`/analytics/overview?days=${days}`);
 }
@@ -120,11 +233,52 @@ export function getRevenue(days: number) {
   return api<RevenueResult>(`/analytics/revenue?days=${days}`);
 }
 
-// CSV exports return text/csv, not JSON, so they bypass the JSON-typed api<T>
-// helper — fetch directly (same credentials/base-URL convention), then trigger a
-// client-side download via a throwaway object URL. Cross-origin cookie auth is
-// carried automatically by fetch with credentials:"include", same as everywhere
-// else in this app; no need for a raw <a href> navigation.
+// ── US-205 Audit Log API Calls ───────────────────────────────────────────────
+
+export function getAuditLogs(params?: {
+  actor_id?: string;
+  action_type?: string;
+  date_from?: string;
+  date_to?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.actor_id) queryParams.set("actor_id", params.actor_id);
+  if (params?.action_type) queryParams.set("action_type", params.action_type);
+  if (params?.date_from) queryParams.set("date_from", params.date_from);
+  if (params?.date_to) queryParams.set("date_to", params.date_to);
+
+  const qs = queryParams.toString();
+  return api<AuditLogListResponse>(`/analytics/audit-logs${qs ? `?${qs}` : ""}`);
+}
+
+export function verifyAuditLogIntegrity() {
+  return api<AuditLogVerifyResponse>("/analytics/audit-logs/verify");
+}
+
+export async function exportAuditLoggedData(
+  module: string,
+  filters: Record<string, unknown> = {},
+  export_format: string = "csv",
+  filename?: string
+): Promise<ExportDataResponse> {
+  const res = await api<ExportDataResponse>("/analytics/export", {
+    method: "POST",
+    body: JSON.stringify({ module, filters, export_format }),
+  });
+
+  // Fail-closed client behavior: if api call succeeded, trigger download of logged output
+  const blob = new Blob([res.content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || `${module.toLowerCase().replace(/\s+/g, "_")}_export.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+
+  return res;
+}
+
+// Legacy CSV exports fallback
 async function downloadCsv(endpoint: string, filename: string): Promise<void> {
   const response = await fetch(`${API_URL}${endpoint}`, { credentials: "include" });
   if (!response.ok) {
@@ -144,13 +298,55 @@ async function downloadCsv(endpoint: string, filename: string): Promise<void> {
 }
 
 export function exportFunnelCsv(days: number) {
-  return downloadCsv(`/analytics/funnel/export?days=${days}`, "funnel.csv");
+  return exportAuditLoggedData("Funnel", { days }, "csv", "funnel.csv");
 }
 
 export function exportFeatureUsageCsv(days: number, showArchived: boolean) {
-  return downloadCsv(`/analytics/feature-usage/export?days=${days}&show_archived=${showArchived}`, "feature_usage.csv");
+  return exportAuditLoggedData("FeatureUsage", { days, showArchived }, "csv", "feature_usage.csv");
 }
 
 export function exportRetentionByFeatureCsv(days: number, feature: CrossFilterFeature) {
-  return downloadCsv(`/analytics/retention-by-feature/export?days=${days}&feature=${feature}`, "retention_by_feature.csv");
+  return exportAuditLoggedData("RetentionByFeature", { days, feature }, "csv", "retention_by_feature.csv");
+}
+
+// ── US-206 Custom Dashboard Views API Calls ──────────────────────────────────
+
+export function getSavedViews() {
+  return api<SavedViewListResponse>("/analytics/views");
+}
+
+export function getSavedView(viewId: string) {
+  return api<SavedViewResponse>(`/analytics/views/${viewId}`);
+}
+
+export function createSavedView(data: SavedViewCreateRequest) {
+  return api<SavedViewResponse>("/analytics/views", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteSavedView(viewId: string) {
+  return api<{ deleted: boolean; view_id: string }>(`/analytics/views/${viewId}`, {
+    method: "DELETE",
+  });
+}
+
+// ── US-207 Data Reconciliation API Calls ─────────────────────────────────────
+
+export function getReconciliationStatus() {
+  return api<ReconciliationSummaryResponse>("/analytics/reconciliation/status");
+}
+
+export function runReconciliationJob() {
+  return api<ReconciliationSummaryResponse>("/analytics/reconciliation/run", {
+    method: "POST",
+  });
+}
+
+export function resyncUserRecord(data: TargetedResyncRequest) {
+  return api<TargetedResyncResponse>("/analytics/reconciliation/resync", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }

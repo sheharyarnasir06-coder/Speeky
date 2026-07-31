@@ -22,14 +22,14 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import Depends
+from fastapi import Depends, WebSocket
 from prisma import Json
-from lib import llm_client, prompts, prosody_engine, recording_engine, session_scorer
+from lib import llm_client, prompts, prosody_engine, recording_engine, session_scorer, voice_ws
 from lib.audio_io import AudioDecodeError
 from lib.prisma_client import db
 from lib.session_scorer import AudioFeatures, ScoredSession
 from lib.speech_config import load_speech_config
-from middlewares.auth_middleware import require_auth
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from utils.feature_errors import InvalidSubmissionError, SessionNotFoundError
 from schemas.public_speaking_schemas import (
     PublicSpeakingScorecard,
@@ -303,19 +303,20 @@ async def submit_qa_response(
     }
 
 
-async def get_voice_token(session_id: str, user_id: str) -> Dict:
-    from fastapi.responses import JSONResponse
-    from lib import livekit_tokens
+# ── Voice mode: WebSocket transport (backend/lib/voice_ws.py). "full": Public Speaking
+# is the only caller that needs prosody + level alongside the transcript.
+async def voice_socket(websocket: WebSocket, session_id: str):
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
 
     session = await db.publicspeakingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
-        return JSONResponse(status_code=404, content={"error": "Session not found"})
-    if not livekit_tokens.is_configured():
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Voice mode unavailable. Use text mode instead."},
-        )
-    return livekit_tokens.mint_room_token(session_id, identity=user_id, mode="full")
+        await websocket.close(code=4404, reason="Session not found")
+        return
+
+    await websocket.accept()
+    await voice_ws.serve(websocket, mode="full")
 
 
 async def get_session(session_id: str, user_id: str) -> Dict:

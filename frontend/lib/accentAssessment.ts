@@ -1,4 +1,5 @@
 import { api } from "./api";
+import type { WordClassification } from "./pronunciation";
 
 // US-82 (Target Accent Selection), US-83 (Score Dispute), US-84 (Profile
 // Staleness & Re-Baseline) — all share one backend profile/pipeline (see
@@ -167,6 +168,10 @@ export interface AccentAssessmentResult {
   intonation_score: number;
   clarity_score: number;
   weak_points: WeakPoint[];
+  // Per-word correct/mispronounced/stress_error/skipped breakdown against the target
+  // passage (backend/schemas/accent_schemas.py's AccentAssessmentResultSchema.words) —
+  // same shape Pronunciation Coach's AttemptResult.words already uses.
+  words: WordClassification[];
   exercises: string[];
   warning?: string | null;
   model_used?: string;

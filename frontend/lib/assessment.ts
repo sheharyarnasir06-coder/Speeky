@@ -1,5 +1,4 @@
 import { api } from "./api";
-import type { VoiceTokenResult } from "./useLiveKitVoice";
 
 // ── Types (mirrors Backend/services/assessment_service.py, gating_service.py,
 // reassessment_service.py response shapes) ──────────────────────────────────
@@ -194,15 +193,6 @@ export function getResultsSummary(assessmentId: string) {
   return api<AssessmentSummary | AssessmentProcessing>(
     `/assessment/${assessmentId}/summary`,
   );
-}
-
-// Voice mode: LiveKit room token for a spoken answer. Same pipeline as AI Conversation —
-// the generic voice_agent/ worker joins the room (name == assessmentId), transcribes, and
-// pushes the transcript back over the data channel (handled by useLiveKitVoice).
-export function getAssessmentVoiceToken(assessmentId: string) {
-  return api<VoiceTokenResult>(`/assessment/${assessmentId}/voice-token`, {
-    method: "POST",
-  });
 }
 
 // ── Feature-Access Gating (US-12) ────────────────────────────────────────────

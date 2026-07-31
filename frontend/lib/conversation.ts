@@ -16,12 +16,6 @@ export interface StartConversationResult {
   started_at: string;
 }
 
-export interface VoiceTokenResult {
-  url: string;
-  token: string;
-  room: string;
-}
-
 export interface SendMessageResult {
   session_id: string;
   reply: string;
@@ -91,14 +85,6 @@ export function startConversation(data: {
   });
 }
 
-export function getConversationVoiceToken(sessionId: string) {
-  return api<VoiceTokenResult>(
-    `/conversation/sessions/${sessionId}/voice-token`,
-    {
-      method: "POST",
-    }
-  );
-}
 
 export function sendConversationMessage(
   sessionId: string,

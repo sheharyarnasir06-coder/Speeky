@@ -9,6 +9,7 @@ import {
   Download,
   Filter,
   ShieldAlert,
+  Trash2,
   TrendingDown,
   TrendingUp,
   Users,
@@ -21,6 +22,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ApiError } from "@/lib/api";
 import {
   CROSS_FILTER_FEATURES,
+  exportAuditLoggedData,
   exportFeatureUsageCsv,
   exportFunnelCsv,
   exportRetentionByFeatureCsv,
@@ -31,12 +33,16 @@ import {
   getRevenue,
   type CrossFilterFeature,
   type CrossFilterResult,
+  type DashboardWidgetConfig,
   type FeatureUsageResult,
   type FunnelResult,
   type OverviewResult,
   type RevenueResult,
+  type SavedViewResponse,
 } from "@/lib/analytics";
 import { useAuth } from "@/contexts/AuthContext";
+import { SavedViewsBar } from "@/components/analytics/SavedViewsBar";
+import { ReconciliationBadge } from "@/components/analytics/ReconciliationBadge";
 
 const DAY_OPTIONS = [
   { value: "7", label: "Last 7 days" },
@@ -50,12 +56,6 @@ type Tab = "overview" | "funnel" | "usage" | "cross-filter" | "revenue";
 
 const HIGH_DROP_OFF_THRESHOLD = 50;
 
-// ── Small chart primitives — inline, single-consumer, not worth a components/ui
-// abstraction for one page. Sequential-magnitude bars use the brand hue only;
-// "engaged vs general" uses emphasis (brand vs gray) rather than a second
-// categorical hue, since the two brand tokens (primary/accent) sit too close in
-// hue to reliably tell apart — emphasis is also the semantically correct read
-// here anyway ("do engaged users retain better" — general is the baseline).
 function Bar({ pct, tone = "brand" }: { pct: number; tone?: "brand" | "muted" }) {
   return (
     <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
@@ -67,8 +67,6 @@ function Bar({ pct, tone = "brand" }: { pct: number; tone?: "brand" | "muted" })
   );
 }
 
-// Two-shade "meter" for a subset ratio (Completed within Started) — 1 hue, 2
-// shades, not a second categorical series, since completed ⊆ started.
 function SplitBar({ totalPct, innerPct, title }: { totalPct: number; innerPct: number; title: string }) {
   return (
     <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted" title={title}>
@@ -104,13 +102,61 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   );
 }
 
+const DEFAULT_WIDGETS: DashboardWidgetConfig[] = [
+  { id: "active_users_overview", position: 0 },
+  { id: "daily_sessions", position: 1 },
+  { id: "retention_funnel", position: 2 },
+  { id: "feature_usage", position: 3 },
+];
+
 export default function AdminAnalyticsPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [tab, setTab] = React.useState<Tab>("overview");
   const [days, setDays] = React.useState(30);
 
-  const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  // US-206 Saved view state
+  const [activeView, setActiveView] = React.useState<SavedViewResponse | null>(null);
+  const [activeWidgets, setActiveWidgets] = React.useState<Array<Record<string, unknown>>>(
+    DEFAULT_WIDGETS.map((w) => ({ ...w }))
+  );
+
+  const role = user?.role ?? "";
+  const isAdmin = role === "ADMIN" || role === "SUPER_ADMIN" || role === "COMPLIANCE" || role === "FINANCE";
+  const isSuperAdmin = role === "SUPER_ADMIN";
+
+  function handleApplyView(view: SavedViewResponse | null) {
+    setActiveView(view);
+    if (view) {
+      if (view.filters?.days && typeof view.filters.days === "number") {
+        setDays(view.filters.days);
+      } else {
+        setDays(30);
+      }
+      
+      if (view.filters?.tab && typeof view.filters.tab === "string") {
+        const targetTab = view.filters.tab as Tab;
+        if (targetTab === "revenue" && !isSuperAdmin) {
+          setTab("overview");
+        } else {
+          setTab(targetTab);
+        }
+      } else {
+        setTab("overview");
+      }
+      
+      setActiveWidgets(view.widgets || []);
+      toast.info(`Loaded view "${view.name}"`);
+    } else {
+      setDays(30);
+      setTab("overview");
+      setActiveWidgets(DEFAULT_WIDGETS.map((w) => ({ ...w })));
+    }
+  }
+
+  function handleRemoveWidget(widgetId: string) {
+    setActiveWidgets((prev) => prev.filter((w) => w.id !== widgetId));
+    toast.success(`Removed widget from current layout.`);
+  }
 
   if (authLoading) return null;
   if (!isAdmin) {
@@ -124,22 +170,67 @@ export default function AdminAnalyticsPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      {/* Header with Title + Date Range + Reconciliation Badge */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
-            Analytics
+            Analytics & Operations
           </h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-            Platform activity, onboarding drop-off, and feature adoption, computed live from
-            real usage data.
-            {isSuperAdmin ? " Revenue is a Super Admin-only demo view — no billing is connected yet." : ""}
+            Platform activity, onboarding drop-off, feature adoption, and payment reconciliation.
           </p>
         </div>
-        <div className="w-full sm:w-56">
-          <Select label="Date range" hideLabel value={String(days)} onChange={(e) => setDays(Number(e.target.value))} options={DAY_OPTIONS} />
+        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+          <ReconciliationBadge />
+          <div className="w-full sm:w-48">
+            <Select label="Date range" hideLabel value={String(days)} onChange={(e) => setDays(Number(e.target.value))} options={DAY_OPTIONS} />
+          </div>
         </div>
       </div>
 
+      {/* US-206 Saved Views Bar */}
+      <SavedViewsBar
+        currentFilters={{ days, tab }}
+        currentWidgets={activeWidgets as unknown as DashboardWidgetConfig[]}
+        activeView={activeView}
+        onApplyView={handleApplyView}
+        onRemoveDeprecatedWidget={handleRemoveWidget}
+      />
+
+      {/* Deprecated widget placeholders if present in active view */}
+      {activeWidgets.some((w) => w.deprecated || w.placeholder_label) ? (
+        <div className="flex flex-col gap-3">
+          {activeWidgets
+            .filter((w) => w.deprecated || w.placeholder_label)
+            .map((w, idx) => (
+              <div
+                key={String(w.id || idx)}
+                className="flex items-center justify-between rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm text-foreground shadow-sm"
+              >
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+                  <div>
+                    <p className="font-semibold text-xs uppercase tracking-wide text-warning">Deprecated Widget</p>
+                    <p className="text-xs">
+                      Widget <code className="font-mono">{String(w.id)}</code> is no longer available: {String(w.placeholder_label || "This widget is no longer available")}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRemoveWidget(String(w.id))}
+                  className="h-8 text-xs text-danger hover:bg-danger/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  Remove from View
+                </Button>
+              </div>
+            ))}
+        </div>
+      ) : null}
+
+      {/* Navigation Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
         <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>Overview</TabButton>
         <TabButton active={tab === "funnel"} onClick={() => setTab("funnel")}>Onboarding Funnel</TabButton>
@@ -149,7 +240,7 @@ export default function AdminAnalyticsPage() {
           <TabButton active={tab === "revenue"} onClick={() => setTab("revenue")}>
             <span className="inline-flex items-center gap-1">
               <Crown className="h-3.5 w-3.5" aria-hidden="true" />
-              Revenue
+              Revenue & Reconciliation
             </span>
           </TabButton>
         ) : null}
@@ -164,7 +255,7 @@ export default function AdminAnalyticsPage() {
   );
 }
 
-// ── Overview (PAD-US-10) ─────────────────────────────────────────────────────
+// ── Overview ─────────────────────────────────────────────────────────────────
 function OverviewTab({ days }: { days: number }) {
   const [data, setData] = React.useState<OverviewResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -261,7 +352,7 @@ function MiniFunnel({ funnel }: { funnel: OverviewResult["onboarding_funnel"] })
   );
 }
 
-// ── Funnel (PAD-US-12) ───────────────────────────────────────────────────────
+// ── Funnel (Audit Logged Export) ─────────────────────────────────────────────
 function FunnelTab({ days }: { days: number }) {
   const [data, setData] = React.useState<FunnelResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -279,8 +370,9 @@ function FunnelTab({ days }: { days: number }) {
     setExporting(true);
     try {
       await exportFunnelCsv(days);
+      toast.success("Funnel CSV exported and recorded in audit log.");
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Export failed.");
+      toast.error(err instanceof ApiError ? err.message : "Audit-logged export failed.");
     } finally {
       setExporting(false);
     }
@@ -293,12 +385,11 @@ function FunnelTab({ days }: { days: number }) {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Web-app page-view tracking isn&apos;t implemented in this product yet, so the funnel starts at
-          Registration — the first step this app can honestly measure.
+          Funnel starts at Registration — the first step measured in this application.
         </p>
         <Button size="sm" variant="outline" loading={exporting} onClick={handleExport}>
           <Download className="h-4 w-4" aria-hidden="true" />
-          Export CSV
+          Export CSV (Audit-Logged)
         </Button>
       </div>
 
@@ -317,7 +408,7 @@ function FunnelTab({ days }: { days: number }) {
   );
 }
 
-// ── Feature Usage (PAD-US-13) ────────────────────────────────────────────────
+// ── Feature Usage (Audit Logged Export) ──────────────────────────────────────
 function FeatureUsageTab({ days }: { days: number }) {
   const [data, setData] = React.useState<FeatureUsageResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -336,8 +427,9 @@ function FeatureUsageTab({ days }: { days: number }) {
     setExporting(true);
     try {
       await exportFeatureUsageCsv(days, showArchived);
+      toast.success("Feature usage CSV exported and recorded in audit log.");
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Export failed.");
+      toast.error(err instanceof ApiError ? err.message : "Audit-logged export failed.");
     } finally {
       setExporting(false);
     }
@@ -362,7 +454,7 @@ function FeatureUsageTab({ days }: { days: number }) {
         </label>
         <Button size="sm" variant="outline" loading={exporting} onClick={handleExport}>
           <Download className="h-4 w-4" aria-hidden="true" />
-          Export CSV
+          Export CSV (Audit-Logged)
         </Button>
       </div>
 
@@ -399,7 +491,7 @@ function FeatureUsageTab({ days }: { days: number }) {
   );
 }
 
-// ── Cross-Filter (PAD-US-14) ─────────────────────────────────────────────────
+// ── Cross-Filter (Audit Logged Export) ───────────────────────────────────────
 function CrossFilterTab({ days }: { days: number }) {
   const [feature, setFeature] = React.useState<CrossFilterFeature>("scenario_based_learning");
   const [data, setData] = React.useState<CrossFilterResult | null>(null);
@@ -418,8 +510,9 @@ function CrossFilterTab({ days }: { days: number }) {
     setExporting(true);
     try {
       await exportRetentionByFeatureCsv(days, feature);
+      toast.success("Retention comparison exported and recorded in audit log.");
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Export failed.");
+      toast.error(err instanceof ApiError ? err.message : "Audit-logged export failed.");
     } finally {
       setExporting(false);
     }
@@ -438,12 +531,11 @@ function CrossFilterTab({ days }: { days: number }) {
         </div>
         <Button size="sm" variant="outline" loading={exporting} onClick={handleExport} disabled={!data || data.zero_data}>
           <Download className="h-4 w-4" aria-hidden="true" />
-          Export CSV
+          Export CSV (Audit-Logged)
         </Button>
       </div>
 
       {error ? <p className="text-sm text-danger">{error}</p> : null}
-
       {!error && !data ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
       {data?.status === "processing" ? (
@@ -486,10 +578,11 @@ function CrossFilterTab({ days }: { days: number }) {
   );
 }
 
-// ── Revenue (PAD-US-11) — Super Admin only, mock ─────────────────────────────
+// ── Revenue (Audit Logged Export + US-207 Reconciliation) ────────────────────
 function RevenueTab({ days }: { days: number }) {
   const [data, setData] = React.useState<RevenueResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [exporting, setExporting] = React.useState(false);
 
   React.useEffect(() => {
     setData(null);
@@ -499,6 +592,18 @@ function RevenueTab({ days }: { days: number }) {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't load revenue data."));
   }, [days]);
 
+  async function handleExportRevenue() {
+    setExporting(true);
+    try {
+      await exportAuditLoggedData("Revenue", { days }, "csv", "revenue_export.csv");
+      toast.success("Revenue data exported and logged in audit trail.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Audit-logged revenue export failed.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
@@ -506,9 +611,15 @@ function RevenueTab({ days }: { days: number }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-foreground">
-        <Crown className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-        {data.note}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm text-foreground">
+          <Crown className="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          {data.note}
+        </div>
+        <Button size="sm" variant="outline" loading={exporting} onClick={handleExportRevenue}>
+          <Download className="h-4 w-4" aria-hidden="true" />
+          Export Revenue CSV (Audit-Logged)
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

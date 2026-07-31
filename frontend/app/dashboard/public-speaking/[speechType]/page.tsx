@@ -21,10 +21,9 @@ import {
   startPublicSpeakingSession,
   submitPublicSpeakingTurn,
   submitPublicSpeakingQa,
-  getPublicSpeakingVoiceToken,
   type SpeechType,
 } from "@/lib/publicSpeaking";
-import { useLiveKitVoice, type VoiceFeatures } from "@/lib/useLiveKitVoice";
+import { buildVoiceWsUrl, useVoiceSocket, type VoiceFeatures } from "@/lib/useVoiceSocket";
 
 const SPEECH_TYPE_CONFIG: Record<string, { label: string; description: string; ideal_wpm: string }> = {
   business_pitch: {
@@ -82,10 +81,10 @@ export default function PublicSpeakingSessionPage() {
     avg_db: undefined as number | undefined,
     pitch_range_semitones: 0,
   });
-  const fetchVoiceToken = React.useCallback(() => {
+  const getWsUrl = React.useCallback(() => {
     const id = sessionIdRef.current;
-    if (!id) return Promise.reject(new Error("No active session"));
-    return getPublicSpeakingVoiceToken(id);
+    if (!id) return null;
+    return buildVoiceWsUrl(`/public-speaking/${id}/voice-ws`);
   }, []);
   const {
     isVoiceActive,
@@ -95,7 +94,7 @@ export default function PublicSpeakingSessionPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useLiveKitVoice(fetchVoiceToken, (text, features?: VoiceFeatures) => {
+  } = useVoiceSocket(getWsUrl, (text, features?: VoiceFeatures) => {
     setTextContent((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
     if (features) {
       const acc = featuresRef.current;

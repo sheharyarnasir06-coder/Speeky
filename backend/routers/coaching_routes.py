@@ -6,7 +6,7 @@ from services.coaching_service import (
     roleplay_turn,
     start_session,
     submit_session,
-    voice_token,
+    voice_socket,
 )
 from services.code_switch_service import (
     delete_code_switch_word,
@@ -25,7 +25,7 @@ router.add_api_route("/start", start_session, methods=["POST"])
 router.add_api_route("/code-switch-words", list_code_switch_words, methods=["GET"])
 router.add_api_route("/code-switch-words/{word_id}", delete_code_switch_word, methods=["DELETE"])
 router.add_api_route("/{session_id}/turn", roleplay_turn, methods=["POST"])
-router.add_api_route("/{session_id}/voice-token", voice_token, methods=["POST"])
+router.add_api_websocket_route("/{session_id}/voice-ws", voice_socket)
 router.add_api_route("/{session_id}/submit", submit_session, methods=["POST"])
 # US-102 filler-word breakdown for a coaching session. Single canonical path — the
 # duplicate "/sessions/{session_id}/filler-words" alias pointed at this same handler.

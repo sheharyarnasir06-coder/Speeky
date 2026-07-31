@@ -2,9 +2,7 @@
 ASR Adapter: Faster-Whisper → WordAttempt
 
 Converts the raw word_timings list produced by the real STT pipeline
-(backend/voice_agent/agent.py → transcribe_audio()) into the
-List[Optional[WordAttempt]] that pronunciation_pipeline.py's
-score_sentence() / score_sentence_for_user() expects.
+into the List[Optional[WordAttempt]] that pronunciation_pipeline.py's score_sentence() / score_sentence_for_user() expects.
 
 STT output format (Faster-Whisper, word_timestamps=True):
     [
@@ -64,7 +62,6 @@ def word_timings_to_attempts(
 
     Args:
         word_timings:
-            Raw list from voice_agent/agent.py transcribe_audio():
             [{"word": str, "start": float, "end": float}, ...]
             Each entry must have "word", "start", "end".  A missing
             "confidence" key is silently replaced by default_confidence.

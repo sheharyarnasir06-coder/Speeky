@@ -14,11 +14,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import Depends
+from fastapi import Depends, WebSocket
 from fastapi.responses import JSONResponse
 
-from lib import ai_client, explore_sessions, kv_store, livekit_tokens
-from middlewares.auth_middleware import require_auth
+from lib import ai_client, explore_sessions, kv_store, voice_ws
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from schemas.interview_coach_schemas import (
     AIExchange,
     AnswerRequest,
@@ -341,10 +341,20 @@ async def _get_session(session_id: str, user_id: str) -> dict:
     return session
 
 
-# ── Voice mode: LiveKit room token (mirrors conversation/scenario/coaching) ────
-async def _voice_token(user_id: str, session_id: str) -> dict:
-    await _get_session(session_id, user_id)  # raises SessionNotFoundError if missing/not owned
-    return livekit_tokens.mint_room_token(session_id, identity=user_id)
+# ── Voice mode: WebSocket transport ──────────────────
+async def voice_socket(websocket: WebSocket, session_id: str):
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
+
+    try:
+        await _get_session(session_id, user_id)
+    except SessionNotFoundError:
+        await websocket.close(code=4404, reason="Interview session not found")
+        return
+
+    await websocket.accept()
+    await voice_ws.serve(websocket, mode="transcript")
 
 
 async def _generate_next_question(session: dict, speaker: str, instruction: str) -> str:
@@ -705,14 +715,6 @@ async def get_session_state(session_id: str, user_id: str = Depends(require_auth
 
 async def submit_answer(session_id: str, payload: AnswerRequest, user_id: str = Depends(require_auth)):
     return await _submit_answer(user_id, session_id, payload)
-
-
-async def voice_token(session_id: str, user_id: str = Depends(require_auth)):
-    if not livekit_tokens.is_configured():
-        return JSONResponse(status_code=503, content={
-            "error": "Voice mode unavailable. Use text mode instead.",
-        })
-    return await _voice_token(user_id, session_id)
 
 
 async def pause_session(session_id: str, payload: PauseSessionRequest, user_id: str = Depends(require_auth)):

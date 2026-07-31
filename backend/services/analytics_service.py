@@ -23,14 +23,23 @@ import csv
 import io
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Depends
 from fastapi.responses import JSONResponse, Response
 
 from lib import prompts
+from lib.admin_constants import (
+    ACTION_VIEW_RESTRICTED,
+    ANALYTICS_MODULE_FEATURE_USAGE,
+    ANALYTICS_MODULE_FUNNEL,
+    ANALYTICS_MODULE_OVERVIEW,
+    ANALYTICS_MODULE_RETENTION,
+    ANALYTICS_MODULE_REVENUE,
+)
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin, require_super_admin
+from services.audit_log_service import log_action
 
 MAX_DAYS = 365  # PAD-US-10 E-01 / TC-05
 DEFAULT_DAYS = 30
@@ -63,6 +72,28 @@ def _bad_days(days: int) -> Optional[JSONResponse]:
 
 def _period_start(days: int) -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+async def _log_view(actor_id: str, module: str, scope: Dict[str, Any]) -> None:
+    """
+    US-205: Fire-and-forget VIEW_RESTRICTED audit entry.
+    Does NOT block the analytics response if the KV write fails — unlike exports,
+    views are logged best-effort. (E-01 fail-closed applies only to data exports.)
+    """
+    try:
+        user = await db.user.find_unique(where={"id": actor_id})
+        actor_role = getattr(user, "role", "ADMIN")
+        if hasattr(actor_role, "value"):
+            actor_role = actor_role.value
+        await log_action(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            action_type=ACTION_VIEW_RESTRICTED,
+            module=module,
+            scope=scope,
+        )
+    except Exception:
+        pass  # Best-effort: never surface audit write errors to the admin dashboard
 
 
 async def _activity_rows(since: Optional[datetime] = None, user_ids: Optional[Set[str]] = None) -> List[Dict]:
@@ -209,6 +240,9 @@ async def get_overview(days: int = DEFAULT_DAYS, _admin_id: str = Depends(requir
         return bad
     since = _period_start(days)
 
+    # US-205: log restricted module view (fire-and-forget)
+    asyncio.ensure_future(_log_view(_admin_id, ANALYTICS_MODULE_OVERVIEW, {"days": days}))
+
     rows = await _activity_rows(since=since)
     active_user_ids = {r["userId"] for r in rows}
     daily_sessions = _daily_series(days, [r["createdAt"] for r in rows])
@@ -236,6 +270,10 @@ async def get_funnel(days: int = DEFAULT_DAYS, _admin_id: str = Depends(require_
     if bad:
         return bad
     since = _period_start(days)
+
+    # US-205: log restricted module view (fire-and-forget)
+    asyncio.ensure_future(_log_view(_admin_id, ANALYTICS_MODULE_FUNNEL, {"days": days}))
+
     funnel = await _onboarding_funnel(since)
     return {
         "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -262,6 +300,12 @@ async def get_feature_usage(
     bad = _bad_days(days)
     if bad:
         return bad
+
+    # US-205: log restricted module view (fire-and-forget)
+    asyncio.ensure_future(_log_view(
+        _admin_id, ANALYTICS_MODULE_FEATURE_USAGE, {"days": days, "show_archived": show_archived}
+    ))
+
     usage = await _feature_usage_counts(_period_start(days), include_archived=show_archived)
     return {
         "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -330,6 +374,12 @@ async def get_retention_by_feature(
             status_code=400,
             content={"error": f"Unknown feature. Choose one of: {', '.join(CROSS_FILTER_FEATURES)}"},
         )
+
+    # US-205: log restricted module view (fire-and-forget)
+    asyncio.ensure_future(_log_view(
+        _admin_id, ANALYTICS_MODULE_RETENTION, {"days": days, "feature": feature}
+    ))
+
     try:
         result = await asyncio.wait_for(_cross_filter(days, feature), timeout=CROSS_FILTER_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
@@ -365,6 +415,9 @@ async def get_revenue(days: int = DEFAULT_DAYS, _super_admin_id: str = Depends(r
     bad = _bad_days(days)
     if bad:
         return bad
+
+    # US-205: Revenue is in RESTRICTED_ANALYTICS_MODULES; log every view (fire-and-forget)
+    asyncio.ensure_future(_log_view(_super_admin_id, ANALYTICS_MODULE_REVENUE, {"days": days}))
     today = datetime.now(timezone.utc).date()
     mrr_series = [
         {"date": (today - timedelta(days=i)).isoformat(), "mrr": round(1200 + (days - i) * 14.5 + (i % 7) * 30, 2)}

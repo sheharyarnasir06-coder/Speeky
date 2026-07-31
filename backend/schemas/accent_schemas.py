@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from pydantic import BaseModel
+from schemas.pronunciation_schemas import WordResultSchema
 
 
 class TargetPassageSchema(BaseModel):
@@ -27,6 +28,11 @@ class AccentAssessmentResultSchema(BaseModel):
     intonation_score: Optional[float] = None
     clarity_score: Optional[float] = None
     weak_points: List[WeakPointSchema] = []
+    # Per-word correct/mispronounced/stress_error/skipped breakdown against the target
+    # passage — same shape Pronunciation Coach's AttemptResult.words already uses, so
+    # the frontend's live-preview word coloring can resolve into this authoritative
+    # result the same way for both features.
+    words: List[WordResultSchema] = []
     warning: Optional[str] = None
     model_used: Optional[str] = None
 

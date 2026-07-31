@@ -24,19 +24,16 @@ dependencies = [
     "g2p-en>=2.1.0",
     "nltk>=3.9",
     "langdetect>=1.0.9",
-    "livekit-api>=1.2",
-    "livekit-agents>=0.0.28",
-    "livekit-plugins-silero>=0.0.7",
-    # Pronunciation Coach (US-95) / Accent Assessment (US-93, US-89) -- see
-    # lib/recording_engine.py for how these fit together.
+    # Pronunciation Coach (US-95) / Accent Assessment (US-93, US-89) -- also power the
+    # voice-ws realtime pipeline (lib/voice_ws.py): faster-whisper for transcription,
+    # silero-vad for utterance segmentation -- see lib/recording_engine.py for how they
+    # fit together for the upload-based flows.
     "faster-whisper>=1.2.1",
     "av>=13.0",
     "silero-vad>=5.1",
     "praat-parselmouth>=0.4.7",
     "numpy>=1.26",
     "pronouncing>=0.2.0",
-    "livekit==1.1.13",
-    "livekit-protocol==1.1.19",
 ]
 
 [tool.taskipy.tasks]

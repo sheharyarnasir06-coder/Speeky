@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { ClipboardList, ShieldCheck, Crown } from "lucide-react";
+import { ClipboardList, ShieldCheck, Crown, FileText } from "lucide-react";
 import { cn, getInitials } from "@/lib/utils";
 import { DASHBOARD_NAV_LINKS } from "@/lib/dashboard-data";
 import { useAuth } from "@/contexts/AuthContext";
@@ -14,6 +14,8 @@ import { API_ORIGIN } from "@/lib/api";
 const ROLE_LABELS: Record<string, string> = {
   SUPER_ADMIN: "Super Admin",
   ADMIN: "Administrator",
+  COMPLIANCE: "Compliance Officer",
+  FINANCE: "Finance Admin",
   USER: "Learner",
 };
 
@@ -23,23 +25,19 @@ export function Sidebar() {
   const { access } = useAssessmentAccess();
   const { explore, publicSpeaking, pronunciation } = useActiveSessions();
 
-  // Resumable-session dot — grouped per nav link so a user can tell, without
-  // opening each section, that leaving mid-session didn't just silently lose it.
   const RESUMABLE_HREFS: Record<string, boolean> = {
     "/dashboard/explore": Boolean(explore?.active),
     "/dashboard/pronunciation": Boolean(pronunciation?.found),
     "/dashboard/public-speaking": Boolean(publicSpeaking?.found),
   };
 
-  // Persistent entry to the baseline assessment for anyone who hasn't completed it.
-  // Without this the ONLY path was the throttled AssessmentReminderBanner overlay, which
-  // is suppressed for an hour right after a skip — so a user who skipped (or backed out
-  // mid-assessment) had no way back until it reappeared. A permanent nav item is
-  // discoverable regardless of the prompt throttle.
   const showAssessmentLink =
     access != null &&
     access.assessment_status !== "COMPLETED" &&
     access.assessment_status !== "PLATEAUED";
+
+  const isAdminRole = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" || user?.role === "COMPLIANCE" || user?.role === "FINANCE";
+  const isComplianceOrSuper = user?.role === "COMPLIANCE" || user?.role === "SUPER_ADMIN";
 
   return (
     <aside className="flex w-[4.5rem] shrink-0 flex-col items-center border-r border-border bg-surface-elevated px-2 py-6 lg:w-64 lg:items-stretch lg:px-4">
@@ -111,20 +109,36 @@ export function Sidebar() {
             <span className="hidden lg:inline">Assessment</span>
           </Link>
         ) : null}
-        {user?.role === "ADMIN" || user?.role === "SUPER_ADMIN" ? (
+        {isAdminRole ? (
           <Link
             href="/dashboard/admin"
             aria-label="Admin"
             title="Admin"
             className={cn(
               "flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
-              pathname.startsWith("/dashboard/admin") && pathname !== "/dashboard/admin/users"
+              pathname.startsWith("/dashboard/admin") && pathname !== "/dashboard/admin/users" && pathname !== "/dashboard/admin/audit-logs"
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-surface hover:text-foreground",
             )}
           >
             <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="hidden lg:inline">Admin</span>
+          </Link>
+        ) : null}
+        {isComplianceOrSuper ? (
+          <Link
+            href="/dashboard/admin/audit-logs"
+            aria-label="Audit Logs"
+            title="Audit Logs"
+            className={cn(
+              "flex items-center justify-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors lg:justify-start",
+              pathname === "/dashboard/admin/audit-logs"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-surface hover:text-foreground",
+            )}
+          >
+            <FileText className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="hidden lg:inline">Audit Logs</span>
           </Link>
         ) : null}
         {user?.role === "SUPER_ADMIN" ? (

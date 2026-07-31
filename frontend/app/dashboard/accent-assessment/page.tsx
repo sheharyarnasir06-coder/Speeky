@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
+import { WordByWordDisplay } from "@/components/dashboard/WordByWordDisplay";
 import { cn } from "@/lib/utils";
 import {
   getTargetPassage,
@@ -268,6 +269,14 @@ export default function AccentAssessmentPage() {
             <div className="flex items-start gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-xs font-medium text-primary">
               <Info className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{result.warning}</span>
+            </div>
+          )}
+
+          {/* Word by word breakdown */}
+          {result.words && result.words.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Word by word</h3>
+              <WordByWordDisplay className="mt-3" words={result.words.map((w) => ({ word: w.word, status: w.status }))} />
             </div>
           )}
 

@@ -1,9 +1,13 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv(override=True)  # must run before any os.environ reads below; override so a
 # `--reload` restart picks up .env edits (e.g. GROQ_MODEL) instead of keeping stale values.
+
+# prisma-client-py's query engine talks to this process over a local HTTP port via httpx, so suppress the INFO noise-logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError

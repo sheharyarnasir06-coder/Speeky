@@ -1,13 +1,14 @@
 """
-faster-whisper wrapper — same STT engine already used in backend/voice_agent/agent.py
-for live conversation practice; here it runs in-process against a one-shot upload
-instead of a streamed LiveKit utterance.
+faster-whisper wrapper — same model this thread-local get_model() shares with
+backend/lib/voice_ws.py's realtime WebSocket pipeline; here it runs in-process against
+a one-shot upload instead of a streamed utterance.
 
 Gives word-level timestamps *and* per-word confidence (`probability`), which
 lib/text_alignment.py and services/pronunciation_coach_service.py use to tell a
 mispronounced word apart from a skipped one.
 """
 
+import threading
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -16,17 +17,28 @@ from faster_whisper import WhisperModel
 
 from lib.speech_config import SpeechConfig
 
-_model: Optional[WhisperModel] = None
-_model_key: Optional[tuple] = None
+# One WhisperModel instance per thread, not a shared global — faster-whisper/ctranslate2
+# model instances aren't guaranteed safe for concurrent inference from multiple threads at
+# once, and lib/voice_ws.py now calls get_model() from a multi-worker executor pool so
+# independent users' utterances can transcribe in parallel instead of queueing behind each
+# other. Callers that only ever run on one thread (the upload-analysis path via
+# lib/recording_engine.py) see identical behavior: same thread -> same cached instance.
+_local = threading.local()
 
 
 def _get_model(config: SpeechConfig) -> WhisperModel:
-    global _model, _model_key
     key = (config.stt_model_size, config.stt_device, config.stt_compute_type)
-    if _model is None or _model_key != key:
-        _model = WhisperModel(config.stt_model_size, device=config.stt_device, compute_type=config.stt_compute_type)
-        _model_key = key
-    return _model
+    if getattr(_local, "model", None) is None or _local.model_key != key:
+        _local.model = WhisperModel(config.stt_model_size, device=config.stt_device, compute_type=config.stt_compute_type)
+        _local.model_key = key
+    return _local.model
+
+
+def get_model(config: SpeechConfig) -> WhisperModel:
+    """Public accessor so other callers needing raw model access (lib/voice_ws.py's
+    realtime tiers, which need transcribe() options this module's transcribe() doesn't
+    expose) share this same thread-local cache instead of loading a second model instance."""
+    return _get_model(config)
 
 
 @dataclass

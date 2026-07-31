@@ -514,7 +514,11 @@ def _record_attempt(session: dict, message_key: str, words: List[Dict]) -> None:
     session["last_completed"] = {
         "phoneme": session["current_phoneme"],
         "sentence": session["current_sentence"],
-        "words": {w["word"]: w["status"] for w in words},
+        # Lowercased keys — _retry_word looks these up by target_word.lower(), and
+        # target_word here can be capitalized (sentence-initial word, proper noun like
+        # "Rachel"). Mismatched casing made every such word fail "not part of the last
+        # completed attempt" even though it plainly was.
+        "words": {w["word"].lower(): w["status"] for w in words},
     }
 
 

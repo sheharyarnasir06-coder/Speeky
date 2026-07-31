@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+from typing import Optional
 
-from fastapi import Depends, Request, Response
+from fastapi import Depends, Request, Response, WebSocket
 
 from lib.prisma_client import db
 from middlewares.error_handler import AuthError
@@ -39,6 +40,20 @@ async def require_auth(request: Request, response: Response) -> str:
         "access_token", sign_access_token({"sub": user_id}), **get_access_cookie_options()
     )
     return user_id
+
+
+async def ws_require_auth(websocket: WebSocket) -> Optional[str]:
+    """Cookie-only auth check for a WebSocket handshake (voice-ws routes) — no
+    refresh-token rotation, since there's no Response to attach a rotated cookie to
+    mid-handshake the way require_auth's Depends(Response) does for REST."""
+    access = websocket.cookies.get("access_token")
+    if access:
+        try:
+            return verify_access_token(access)["sub"]
+        except Exception:
+            pass
+    await websocket.close(code=4401, reason="Not authenticated")
+    return None
 
 
 async def require_admin(user_id: str = Depends(require_auth)) -> str:

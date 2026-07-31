@@ -21,14 +21,14 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import Depends
+from fastapi import Depends, WebSocket
 from fastapi.responses import JSONResponse
 from prisma import Json
 
-from lib import explore_sessions, livekit_tokens, llm_client, prompts, session_scorer
+from lib import explore_sessions, llm_client, prompts, session_scorer, voice_ws
 from lib.prisma_client import db
 from lib.session_scorer import AudioFeatures, ScoredSession
-from middlewares.auth_middleware import require_auth
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from prisma.enums import CoachingInputMode, CoachingScenario, CoachingStatus
 from schemas.coaching_schemas import (
     RoleplayTurnSchema,
@@ -653,20 +653,24 @@ async def submit_session(session_id: str, payload: SubmitCoachingSchema,
     return result
 
 
-async def voice_token(session_id: str, user_id: str = Depends(require_auth)):
-    """Voice mode: LiveKit room token for the roleplay chat turns (mirrors
-    conversation_service.voice_token / scenario_service.voice_token)."""
+# ── Voice mode: WebSocket transport ──────────────────
+async def voice_socket(websocket: WebSocket, session_id: str):
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
+
     gate = await _require_access(user_id)
     if gate:
-        return gate
+        await websocket.close(code=4403, reason="Feature not accessible")
+        return
+
     session = await db.coachingsession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
-        return JSONResponse(status_code=404, content={"error": "Coaching session not found"})
-    if not livekit_tokens.is_configured():
-        return JSONResponse(status_code=503, content={
-            "error": "Voice mode unavailable. Use text mode instead.",
-        })
-    return livekit_tokens.mint_room_token(session_id, identity=user_id)
+        await websocket.close(code=4404, reason="Coaching session not found")
+        return
+
+    await websocket.accept()
+    await voice_ws.serve(websocket, mode="transcript")
 
 
 async def roleplay_turn(session_id: str, payload: RoleplayTurnSchema,

@@ -14,13 +14,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import Depends
+from fastapi import Depends, WebSocket
 from fastapi.responses import JSONResponse
 from prisma import Json
 
 from lib.confidence_engine import ConfidenceScoreEngine, SessionScore
 from lib.prisma_client import db
-from middlewares.auth_middleware import require_auth
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from prisma.enums import AssessmentStatus, LearningLevel
 from prisma.models import BaselineAssessment
 from schemas.assessment_schemas import SubmitResponseSchema
@@ -496,26 +496,25 @@ async def _complete_assessment(assessment: BaselineAssessment) -> Dict:
     }
 
 
-async def get_voice_token(assessment_id: str, user_id: str = Depends(require_auth)):
-    """Mint a LiveKit room token for a spoken assessment answer — same voice pipeline as
-    AI Conversation (lib/livekit_tokens + the generic voice_agent/ worker). The room name
-    IS the assessment_id; the worker auto-joins, runs Silero VAD + faster-whisper on the
-    mic track, and publishes the transcript back over the data channel. Backend never
-    touches raw audio. Replaces the browser Web Speech API path, which needed a secure
-    context (HTTPS/localhost) and was Chromium-only — the cause of the baseline audio error."""
-    from lib import livekit_tokens
+# ── Voice mode: WebSocket transpor. Replaces the browser Web Speech API path, 
+# which needed a secure context (HTTPS/localhost) and was Chromium-only — the cause of the original baseline audio error.
+async def voice_socket(websocket: WebSocket, assessment_id: str):
+    from lib import voice_ws
+
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
 
     assessment = await db.baselineassessment.find_unique(where={"id": assessment_id})
     if not assessment or assessment.userId != user_id:
-        return JSONResponse(status_code=404, content={"error": "Assessment not found"})
+        await websocket.close(code=4404, reason="Assessment not found")
+        return
     if assessment.completedAt:
-        return JSONResponse(status_code=400, content={"error": "Assessment already completed"})
-    if not livekit_tokens.is_configured():
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Voice mode unavailable. Use text mode instead."},
-        )
-    return livekit_tokens.mint_room_token(assessment_id, identity=user_id)
+        await websocket.close(code=4409, reason="Assessment already completed")
+        return
+
+    await websocket.accept()
+    await voice_ws.serve(websocket, mode="transcript")
 
 
 async def restart_assessment(user_id: str = Depends(require_auth)):

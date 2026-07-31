@@ -20,7 +20,6 @@ import { ApiError } from "@/lib/api";
 import {
   getCoachingScenarios,
   getCoachingSessionState,
-  getCoachingVoiceToken,
   sendRoleplayTurn,
   startCoachingSession,
   submitCoachingSession,
@@ -29,7 +28,7 @@ import {
   type StartCoachingResult,
 } from "@/lib/coaching";
 import { useAutoScroll } from "@/lib/useAutoScroll";
-import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
+import { buildVoiceWsUrl, useVoiceSocket } from "@/lib/useVoiceSocket";
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
 import { cn } from "@/lib/utils";
 
@@ -79,17 +78,16 @@ export default function CoachingSessionPage() {
   } = useSpeechRecognition();
 
   // Voice mode for the roleplay chat turns only (draft submission keeps the browser
-  // dictation above — it's a one-shot monologue, not a back-and-forth). Same LiveKit
+  // dictation above — it's a one-shot monologue, not a back-and-forth). Same WebSocket
   // mic-in pattern as Conversation/Scenarios: transcript fills chatInput, never auto-sent.
   const roleplaySessionIdRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (step.name === "roleplay")
       roleplaySessionIdRef.current = step.session.session_id;
   }, [step]);
-  const fetchVoiceToken = React.useCallback(() => {
-    if (!roleplaySessionIdRef.current)
-      return Promise.reject(new Error("No active session"));
-    return getCoachingVoiceToken(roleplaySessionIdRef.current);
+  const getWsUrl = React.useCallback(() => {
+    if (!roleplaySessionIdRef.current) return null;
+    return buildVoiceWsUrl(`/coaching/${roleplaySessionIdRef.current}/voice-ws`);
   }, []);
   const onTranscript = React.useCallback((text: string) => {
     setChatInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
@@ -102,7 +100,7 @@ export default function CoachingSessionPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useLiveKitVoice(fetchVoiceToken, onTranscript);
+  } = useVoiceSocket(getWsUrl, onTranscript);
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Coaching Session",
   });
