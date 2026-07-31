@@ -236,31 +236,16 @@ uv run pytest
 Fully offline — `tests/conftest.py` forces the LLM offline and swaps the KV store for an
 in-process one, so no network or DB connection is needed.
 
-### 6. (Optional) Start the voice agent for AI Conversation Practice's voice mode
+### 6. Voice mode (Conversation / Scenario / Coaching / Interview Coach / Assessment / Public Speaking)
 
-`voice_agent/` is a separate LiveKit worker (own deps, own venv) that transcribes
-*streamed* mic audio in real time and sends the transcript back to the frontend
-over the LiveKit room's data channel (topic `voice_transcript`) — the client fills
-its message input with it, same "review then hit Send" flow as typing. `docker
-compose up` starts it alongside Postgres:
-
-> Note: the main API's `pyproject.toml` **also** depends on `faster-whisper` and
-> `silero-vad` now (see above) — those power Pronunciation Coach / Accent Assessment's
-> one-shot recording uploads (`lib/stt_engine.py`, `lib/vad_engine.py`), a different use
-> case from `voice_agent/`'s continuous LiveKit room streaming. They're separate
-> integrations of the same underlying models, not a shared dependency — `voice_agent/`
-> keeps its own copies in its own venv so the main API's dev-reload server doesn't need
-> to reload a LiveKit worker's deps, and vice versa.
-
-```bash
-docker compose up
-```
-
-It reads `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` from the same `.env`
-this API uses — it never calls this API directly, so no `BACKEND_URL` /
-`INTERNAL_AGENT_SECRET` needed. See `voice_agent/agent.py`'s module docstring for the
-room-naming contract, and `voice_agent/join_test_room.py` for publishing test mic audio
-without a frontend.
+No separate service to run. The browser streams raw 16-bit PCM mic audio straight to
+this API over a WebSocket (`GET /api/<feature>/.../voice-ws`); `lib/voice_ws.py`
+segments it into utterances with Silero VAD and transcribes each one with
+faster-whisper — the same `faster-whisper` / `silero-vad` deps that already power
+Pronunciation Coach / Accent Assessment's one-shot recording uploads
+(`lib/stt_engine.py`, `lib/vad_engine.py`). The client fills its message input with the
+transcript, same "review then hit Send" flow as typing — this API never auto-sends on
+the user's behalf.
 
 ---
 

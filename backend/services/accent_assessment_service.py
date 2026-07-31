@@ -33,6 +33,7 @@ from schemas.accent_schemas import (
     TargetPassageSchema,
     WeakPointSchema,
 )
+from schemas.pronunciation_schemas import WordResultSchema
 from services import accent_calibration_service, liveness_service
 from utils.feature_errors import PassageNotFoundError, UnreadableAudioError, UploadTooLargeError
 
@@ -200,6 +201,30 @@ def _clarity_score(aligned_words: List[AlignedWord], config: SpeechConfig) -> fl
     return round(max(0.0, 100.0 * (1.0 - misses / total)), 2)
 
 
+def _word_results(
+    aligned_words: List[AlignedWord],
+    transcript_words,
+    prosody,
+    config: SpeechConfig,
+) -> List[WordResultSchema]:
+    """Per-word correct/mispronounced/stress_error/skipped breakdown against the target
+    passage — reuses recording_engine.classify_word_status, the same classifier
+    _weak_points already calls selectively below, just run once over every word to
+    build the full list the frontend's word-by-word display needs (mirrors what
+    Pronunciation Coach's _score_words already returns for its own sentence flow)."""
+    results = []
+    for idx, a in enumerate(aligned_words):
+        timing = transcript_words[a.transcript_index] if a.transcript_word is not None else None
+        status = recording_engine.classify_word_status(a.target_word, timing, prosody, config)
+        results.append(WordResultSchema(
+            word=a.target_word,
+            target_index=idx,
+            status=status.value,
+            confidence=timing.probability if timing is not None else None,
+        ))
+    return results
+
+
 def _weak_points(
     aligned_words: List[AlignedWord],
     transcript_words,
@@ -365,6 +390,7 @@ async def submit_passage_assessment(
             rhythm_score = min(100.0, rhythm_score * 1.10) if rhythm_score > 0 else 80.0
 
     weak_points = _weak_points(aligned_words, analysis.words, analysis.prosody, config, rhythm_score, intonation_score)
+    word_results = _word_results(aligned_words, analysis.words, analysis.prosody, config)
 
     assessment = await db.accentassessment.create(
         data={
@@ -399,6 +425,7 @@ async def submit_passage_assessment(
         intonation_score=intonation_score,
         clarity_score=clarity_score,
         weak_points=weak_points,
+        words=word_results,
         warning=warning_notice,
         model_used=model_used,
     )

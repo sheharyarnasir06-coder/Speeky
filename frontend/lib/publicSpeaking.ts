@@ -1,5 +1,4 @@
 import { api } from "./api";
-import type { VoiceTokenResult } from "./useLiveKitVoice";
 
 // Public Speaking Coach — PSC-US-01/03/04/05/06/07/11/12/14.
 // Backend routes live under /public-speaking (see backend/main.py include_router
@@ -105,10 +104,3 @@ export function submitPublicSpeakingQa(
   });
 }
 
-// Shared LiveKit voice pipeline (same as Conversation / Baseline). Room == sessionId; the
-// voice_agent worker transcribes and pushes the transcript over the data channel.
-export function getPublicSpeakingVoiceToken(sessionId: string) {
-  return api<VoiceTokenResult>(`/public-speaking/${sessionId}/voice-token`, {
-    method: "POST",
-  });
-}

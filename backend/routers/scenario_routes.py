@@ -17,7 +17,7 @@ from services.scenario_service import (
     get_session,
     send_turn,
     start_session,
-    voice_token,
+    voice_socket,
 )
 
 router = APIRouter()
@@ -41,7 +41,7 @@ router.add_api_route("/admin/custom/{scenario_id}/evaluate", admin_evaluate_temp
 router.add_api_route("/admin/custom/{scenario_id}/readiness", admin_assess_readiness, methods=["POST"])
 
 router.add_api_route("/{session_id}/turn", send_turn, methods=["POST"])
-router.add_api_route("/{session_id}/voice-token", voice_token, methods=["POST"])
+router.add_api_websocket_route("/{session_id}/voice-ws", voice_socket)
 router.add_api_route("/{session_id}/end", end_session, methods=["POST"])
 router.add_api_route("/{key}", get_scenario_detail, methods=["GET"])
 router.add_api_route("/sessions/{session_id}", get_session, methods=["GET"])

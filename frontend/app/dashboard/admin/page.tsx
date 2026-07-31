@@ -12,6 +12,7 @@ interface AdminHubCard {
   title: string;
   description: string;
   superAdminOnly?: boolean;
+  complianceOnly?: boolean;
 }
 
 const CARDS: AdminHubCard[] = [
@@ -35,6 +36,14 @@ const CARDS: AdminHubCard[] = [
     title: "Analytics",
     description:
       "Active users, retention, onboarding drop-off, feature adoption, and the growth signals that feed anomaly alerts and scheduled reports. Super Admins also see platform revenue.",
+  },
+  {
+    href: "/dashboard/admin/audit-logs",
+    icon: FileText,
+    title: "Audit Log Trail",
+    description:
+      "Inspect tamper-evident action logs, filter export events, and verify hash chain integrity.",
+    complianceOnly: true,
   },
   {
     href: "/dashboard/admin/users",
@@ -65,8 +74,9 @@ export default function AdminHubPage() {
 
   if (isLoading) return null;
 
-  const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
-  if (!isAdmin) {
+  const role = user?.role ?? "";
+  const canAccessAdmin = role === "ADMIN" || role === "SUPER_ADMIN" || role === "COMPLIANCE" || role === "FINANCE";
+  if (!canAccessAdmin) {
     return (
       <div className="mx-auto flex max-w-lg flex-col items-center gap-4 rounded-2xl border border-danger/30 bg-danger/5 p-8 text-center">
         <ShieldAlert className="h-6 w-6 text-danger" aria-hidden="true" />
@@ -75,19 +85,25 @@ export default function AdminHubPage() {
     );
   }
 
-  const isSuperAdmin = user?.role === "SUPER_ADMIN";
-  const cards = CARDS.filter((c) => !c.superAdminOnly || isSuperAdmin);
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  const isComplianceOrSuper = role === "COMPLIANCE" || role === "SUPER_ADMIN";
+
+  const cards = CARDS.filter((c) => {
+    if (c.superAdminOnly && !isSuperAdmin) return false;
+    if (c.complianceOnly && !isComplianceOrSuper) return false;
+    return true;
+  });
 
   return (
     <div className="flex flex-col gap-8">
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
-          Admin
+          Admin Hub
         </h1>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
           {isSuperAdmin
-            ? "Everything an Admin can do, plus account privileges."
-            : "Content management tools available to your Admin role."}
+            ? "Everything an Admin can do, plus user management and financial reconciliation."
+            : "Content, analytics, and administrative management tools."}
         </p>
       </div>
 

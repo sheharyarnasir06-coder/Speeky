@@ -13,3 +13,5 @@ uploads/avatars/*
 !uploads/avatars/user.webp
 data/tts/*.onnx
 data/tts/*.onnx.json
+scripts/*
+seed_admin.py

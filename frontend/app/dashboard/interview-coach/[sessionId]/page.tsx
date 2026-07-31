@@ -22,11 +22,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api";
 import { useAutoScroll } from "@/lib/useAutoScroll";
-import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
+import { buildVoiceWsUrl, useVoiceSocket } from "@/lib/useVoiceSocket";
 import {
   endInterviewSession,
   getInterviewCoachSession,
-  getInterviewCoachVoiceToken,
   pauseInterviewSession,
   resumeInterviewSession,
   shareInterviewReview,
@@ -79,10 +78,10 @@ export default function InterviewCoachSessionPage() {
     answerRef.current = answer;
   }, [answer]);
 
-  // Voice mode: same LiveKit mic-in pattern as Conversation/Scenarios/Coaching —
+  // Voice mode: same WebSocket mic-in pattern as Conversation/Scenarios/Coaching —
   // transcript fills the answer input for the user to review/edit, never auto-sent.
-  const fetchVoiceToken = React.useCallback(
-    () => getInterviewCoachVoiceToken(sessionId),
+  const getWsUrl = React.useCallback(
+    () => buildVoiceWsUrl(`/interview-coach/sessions/${sessionId}/voice-ws`),
     [sessionId],
   );
   const onTranscript = React.useCallback((text: string) => {
@@ -97,7 +96,7 @@ export default function InterviewCoachSessionPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useLiveKitVoice(fetchVoiceToken, onTranscript);
+  } = useVoiceSocket(getWsUrl, onTranscript);
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Interview Coach",
   });

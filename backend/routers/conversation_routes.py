@@ -13,7 +13,7 @@ from services.conversation_service import (
     set_memory_opt_out,
     start_session,
     text_to_speech,
-    voice_token,
+    voice_socket,
 )
 
 router = APIRouter()
@@ -27,8 +27,8 @@ router.add_api_route("/sessions/{session_id}/messages", send_message, methods=["
 router.add_api_route("/sessions/{session_id}/end", end_session, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/transcript", get_transcript, methods=["GET"])  # AIC-US-02
 
-# Voice mode: LiveKit room token for the client, transcript intake for the voice_agent/ worker
-router.add_api_route("/sessions/{session_id}/voice-token", voice_token, methods=["POST"])
+# Voice mode: WebSocket transport straight to this backend (backend/lib/voice_ws.py)
+router.add_api_websocket_route("/sessions/{session_id}/voice-ws", voice_socket)
 router.add_api_route("/internal/sessions/{session_id}/agent-message", agent_send_message, methods=["POST"])
 
 # cross-session personalization memory

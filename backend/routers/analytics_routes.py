@@ -22,7 +22,23 @@ from services.analytics_service import (
     get_retention_by_feature,
     get_revenue,
 )
+from services.audit_log_service import (
+    http_export_data,
+    http_list_audit_logs,
+    http_verify_audit_log,
+)
+from services.dashboard_view_service import (
+    http_create_view,
+    http_delete_view,
+    http_get_view,
+    http_list_views,
+)
 from services.platform_metrics_service import admin_get_snapshot
+from services.reconciliation_service import (
+    http_get_reconciliation_status,
+    http_resync_user,
+    http_run_reconciliation,
+)
 
 router = APIRouter()
 
@@ -42,3 +58,19 @@ router.add_api_route("/revenue", get_revenue, methods=["GET"])
 
 # GAP-03/GAP-04 — the anomaly-alert/report data pipeline, and the deep-link target.
 router.add_api_route("/snapshot", admin_get_snapshot, methods=["GET"])
+
+# US-205 Audit Trail & Fail-Closed Data Export
+router.add_api_route("/audit-logs", http_list_audit_logs, methods=["GET"])
+router.add_api_route("/audit-logs/verify", http_verify_audit_log, methods=["GET"])
+router.add_api_route("/export", http_export_data, methods=["POST"])
+
+# US-206 Custom Dashboard Layout & Saved Views
+router.add_api_route("/views", http_list_views, methods=["GET"])
+router.add_api_route("/views", http_create_view, methods=["POST"])
+router.add_api_route("/views/{view_id}", http_get_view, methods=["GET"])
+router.add_api_route("/views/{view_id}", http_delete_view, methods=["DELETE"])
+
+# US-207 Cross-Source Data Reconciliation
+router.add_api_route("/reconciliation/status", http_get_reconciliation_status, methods=["GET"])
+router.add_api_route("/reconciliation/run", http_run_reconciliation, methods=["POST"])
+router.add_api_route("/reconciliation/resync", http_resync_user, methods=["POST"])

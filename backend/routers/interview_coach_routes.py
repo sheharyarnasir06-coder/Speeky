@@ -13,7 +13,7 @@ from services.interview_coach_service import (
     start_session,
     submit_answer,
     take_break,
-    voice_token,
+    voice_socket,
 )
 from services.filler_word_service import get_filler_words_for_interview_session
 
@@ -23,7 +23,7 @@ router = APIRouter()
 router.add_api_route("/sessions", start_session, methods=["POST"], status_code=201)
 router.add_api_route("/sessions/{session_id}", get_session_state, methods=["GET"])
 router.add_api_route("/sessions/{session_id}/answer", submit_answer, methods=["POST"])
-router.add_api_route("/sessions/{session_id}/voice-token", voice_token, methods=["POST"])
+router.add_api_websocket_route("/sessions/{session_id}/voice-ws", voice_socket)
 router.add_api_route("/sessions/{session_id}/pause", pause_session, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/resume", resume_session, methods=["POST"])
 router.add_api_route("/sessions/{session_id}/break", take_break, methods=["POST"])

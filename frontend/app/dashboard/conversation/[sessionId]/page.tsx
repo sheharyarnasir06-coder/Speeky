@@ -20,7 +20,6 @@ import { ApiError } from "@/lib/api";
 import {
   endConversationSession,
   getConversationTranscript,
-  getConversationVoiceToken,
   sendConversationMessage,
   type ConversationTurn,
   type EndConversationResult,
@@ -35,10 +34,11 @@ import { ScoreDisputeButton } from "@/components/dashboard/ScoreDisputeButton";
 import { playText, stopCurrent } from "@/lib/tts";
 import { useAutoScroll } from "@/lib/useAutoScroll";
 import {
-  useLiveKitVoice,
+  buildVoiceWsUrl,
+  useVoiceSocket,
   type AudioFeatures,
   type VoiceFeatures,
-} from "@/lib/useLiveKitVoice";
+} from "@/lib/useVoiceSocket";
 
 const TIER_CLASSES: Record<string, string> = {
   green: "bg-success/15 text-success",
@@ -145,11 +145,10 @@ export default function ConversationSessionPage() {
   const lastAutoPlayed = React.useRef(-1);
   const audioModeWasOn = React.useRef(false);
 
-  // voice_agent transcribes speech and sends it back over the LiveKit data channel
-  // (topic "voice_transcript") instead of auto-sending — fills the input box so the
-  // user can review/edit before hitting Send.
-  const fetchVoiceToken = React.useCallback(
-    () => getConversationVoiceToken(params.sessionId),
+  // Backend transcribes speech over a WebSocket (backend/lib/voice_ws.py) instead of
+  // auto-sending — fills the input box so the user can review/edit before hitting Send.
+  const getWsUrl = React.useCallback(
+    () => buildVoiceWsUrl(`/conversation/sessions/${params.sessionId}/voice-ws`),
     [params.sessionId],
   );
   // Stores the latest audio features from the voice agent so handleSend can
@@ -174,6 +173,10 @@ export default function ConversationSessionPage() {
     },
     [],
   );
+  // Live-preview text while the user keeps talking — read-only, never touches the
+  // editable message field (the user may be mid-edit on a previous utterance). Clears
+  // itself once the real transcript lands and gets appended into `message` above.
+  const [livePreview, setLivePreview] = React.useState("");
   const {
     isVoiceActive,
     isConnectingVoice,
@@ -183,7 +186,7 @@ export default function ConversationSessionPage() {
     startVoice,
     stopVoice,
     getLastAudioFeatures,
-  } = useLiveKitVoice(fetchVoiceToken, onTranscript);
+  } = useVoiceSocket(getWsUrl, onTranscript, setLivePreview);
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "AI Conversation",
   });
@@ -608,6 +611,11 @@ export default function ConversationSessionPage() {
             className="text-sm text-muted-foreground"
           >
             {voiceStatus}
+          </p>
+        ) : null}
+        {livePreview ? (
+          <p role="status" aria-live="polite" className="text-sm italic text-muted-foreground">
+            {livePreview}
           </p>
         ) : null}
       </div>

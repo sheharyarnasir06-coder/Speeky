@@ -21,7 +21,8 @@ from lib import anomaly_math
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin, require_super_admin
 from schemas.alert_schemas import AssignOwnerRequest, ThresholdUpsertRequest
-from services import audit_log_service, notification_delivery_service, platform_metrics_service
+from services import gap_audit_log_service as audit_log_service
+from services import notification_delivery_service, platform_metrics_service
 from utils import email_utils
 
 logger = logging.getLogger(__name__)

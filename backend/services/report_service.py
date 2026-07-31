@@ -22,7 +22,8 @@ from lib import recurrence, report_render
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin
 from schemas.report_schemas import ReportTemplateCreateRequest, ReportTemplateUpdateRequest
-from services import audit_log_service, notification_service, platform_metrics_service
+from services import gap_audit_log_service as audit_log_service
+from services import notification_service, platform_metrics_service
 from utils import email_utils
 
 logger = logging.getLogger(__name__)

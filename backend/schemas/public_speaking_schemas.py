@@ -16,19 +16,19 @@ class StartPublicSpeakingSchema(BaseModel):
 class PublicSpeakingTurnSchema(BaseModel):
     """Submit a speech turn (audio or text).
 
-    Voice now comes through the shared LiveKit voice pipeline (same as Conversation /
-    Baseline): the voice_agent worker transcribes and the client sends the transcript as
-    text_content plus duration_seconds. duration_seconds routes it through the audio
-    scoring path (real WPM; tone/clarity are proxies since raw audio never reaches the
-    backend). audio_data is the legacy base64-upload path, still accepted.
+    Voice comes through the shared WebSocket voice pipeline: the backend transcribes 
+    in realtime and the client sends the transcript as text_content plus duration_seconds.
+    routes it through the audio scoring path (real WPM; tone/clarity are proxies since
+    raw audio never reaches the backend). audio_data is the legacy base64-upload path,
+    still accepted.
     """
     audio_data: Optional[str] = Field(None, description="Base64 encoded audio file (legacy path)")
     text_content: Optional[str] = Field(None, max_length=MAX_SUBMISSION_CHARS, description="Transcript (voice) or typed text")
     duration_seconds: Optional[float] = Field(None, description="Spoken duration, when voice")
     audio_features: Optional[Dict] = Field(
         None,
-        description="Full-mode LiveKit features from the voice_agent: word_timings, "
-        "avg_db, pitch_range_semitones, duration_seconds. Enables real tone/clarity scoring.",
+        description="Full-mode features from voice_ws.py: word_timings, avg_db, "
+        "pitch_range_semitones, duration_seconds. Enables real tone/clarity scoring.",
     )
     is_final: bool = Field(default=False, description="Whether this is the final submission")
 

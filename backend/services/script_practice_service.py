@@ -15,8 +15,7 @@ Every read's metrics (confidence/fluency/vocabulary/pronunciation) reuse the
 EXISTING audio pipeline unchanged (session_scorer.score_audio_session +
 confidence_engine) so all reads share one yardstick. The live baseline read is
 persisted (transcript + duration), so re-scoring it during a final evaluation
-needs no extra columns. Isolated tables; no writes to any other feature; no
-voice-agent change.
+needs no extra columns. Isolated tables; no writes to any other feature.
 """
 
 import logging

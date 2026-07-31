@@ -22,7 +22,6 @@ import {
   getScenarioDetail,
   getScenarioSession,
   getScenarioSessionState,
-  getScenarioVoiceToken,
   sendScenarioTurn,
   startScenarioSession,
   type ScenarioDetail,
@@ -34,7 +33,7 @@ import { useAutoScroll } from "@/lib/useAutoScroll";
 import { useAutoSpeak } from "@/lib/useAutoSpeak";
 import { stopCurrent } from "@/lib/tts";
 import { usePracticeTimePing } from "@/lib/usePracticeTimePing";
-import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
+import { buildVoiceWsUrl, useVoiceSocket } from "@/lib/useVoiceSocket";
 import { cn } from "@/lib/utils";
 
 interface ChatTurn {
@@ -83,20 +82,25 @@ export default function ScenarioSessionPage() {
     isActivePractice,
   );
 
-  // Voice mode: same LiveKit mic-in pattern as Conversation — transcript fills the
-  // chat input for the user to review/edit, never auto-sent. sessionIdRef tracks the
-  // active session id since the hook must be called unconditionally at top level.
+  // Voice mode: WebSocket mic-in straight to the backend (backend/lib/voice_ws.py) —
+  // transcript fills the chat input for the user to review/edit, never auto-sent.
+  // sessionIdRef tracks the active session id since the hook must be called
+  // unconditionally at top level.
   const sessionIdRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (step.name === "chat") sessionIdRef.current = step.session.session_id;
   }, [step]);
-  const fetchVoiceToken = React.useCallback(() => {
-    if (!sessionIdRef.current) return Promise.reject(new Error("No active scenario session"));
-    return getScenarioVoiceToken(sessionIdRef.current);
+  const getWsUrl = React.useCallback(() => {
+    if (!sessionIdRef.current) return null;
+    return buildVoiceWsUrl(`/scenarios/${sessionIdRef.current}/voice-ws`);
   }, []);
   const onTranscript = React.useCallback((text: string) => {
     setChatInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
   }, []);
+  // Live-preview text while the user keeps talking — read-only, never touches
+  // chatInput (which the user may be mid-edit on from a previous utterance). Clears
+  // itself once the real transcript lands and gets appended above.
+  const [livePreview, setLivePreview] = React.useState("");
   const {
     isVoiceActive,
     isConnectingVoice,
@@ -105,7 +109,7 @@ export default function ScenarioSessionPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useLiveKitVoice(fetchVoiceToken, onTranscript);
+  } = useVoiceSocket(getWsUrl, onTranscript, setLivePreview);
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Scenario Practice",
   });
@@ -490,6 +494,11 @@ export default function ScenarioSessionPage() {
           {voiceStatus ? (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
               {voiceStatus}
+            </p>
+          ) : null}
+          {livePreview ? (
+            <p role="status" aria-live="polite" className="text-sm italic text-muted-foreground">
+              {livePreview}
             </p>
           ) : null}
           {error ? <p className="text-sm text-danger">{error}</p> : null}

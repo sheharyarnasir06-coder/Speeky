@@ -19,7 +19,6 @@ import { ApiError } from "@/lib/api";
 import {
   attemptSkipAssessment,
   confirmSkipAssessment,
-  getAssessmentVoiceToken,
   getResultsSummary,
   isAssessmentQuestion,
   restartAssessment,
@@ -28,7 +27,7 @@ import {
   type AssessmentSummary,
   type SkipAttemptResult,
 } from "@/lib/assessment";
-import { useLiveKitVoice } from "@/lib/useLiveKitVoice";
+import { buildVoiceWsUrl, useVoiceSocket } from "@/lib/useVoiceSocket";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 
 type Step =
@@ -111,16 +110,16 @@ export default function AssessmentPage() {
   const voiceStartedAt = React.useRef<number | null>(null);
   const voiceAnswerUsed = React.useRef(false);
 
-  // LiveKit voice mode — same proven pipeline as AI Conversation (server-side Silero VAD
-  // + faster-whisper in voice_agent/), replacing the browser Web Speech API which needed
-  // a secure context and was Chromium-only. The token's room name is the assessment_id,
-  // so fetchVoiceToken must read the *current* one — hence the ref, since assessmentId
-  // lives in step state and this hook is at the top level.
+  // WebSocket voice mode — same proven pipeline as AI Conversation (server-side Silero
+  // VAD + faster-whisper in backend/lib/voice_ws.py), replacing the browser Web Speech
+  // API which needed a secure context and was Chromium-only. The socket's path is the
+  // assessment_id, so getWsUrl must read the *current* one — hence the ref, since
+  // assessmentId lives in step state and this hook is at the top level.
   const assessmentIdRef = React.useRef<string | null>(null);
-  const fetchVoiceToken = React.useCallback(() => {
+  const getWsUrl = React.useCallback(() => {
     const id = assessmentIdRef.current;
-    if (!id) return Promise.reject(new Error("No active assessment"));
-    return getAssessmentVoiceToken(id);
+    if (!id) return null;
+    return buildVoiceWsUrl(`/assessment/${id}/voice-ws`);
   }, []);
   const {
     isVoiceActive,
@@ -130,10 +129,10 @@ export default function AssessmentPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useLiveKitVoice(fetchVoiceToken, (text) => {
+  } = useVoiceSocket(getWsUrl, (text) => {
     // Accumulate every VAD utterance until the user hits Stop, instead of overwriting
-    // with the latest sentence. The voice_agent/ worker publishes one final transcript
-    // per END_OF_SPEECH, so a natural pause used to drop everything said before it.
+    // with the latest sentence. The backend sends one final transcript per utterance
+    // (backend/lib/voice_ws.py), so a natural pause used to drop everything said before it.
     // Appending (same as AI Conversation) keeps the whole spoken answer and shows it
     // growing live. Reset happens on Stop/submit/new-question via setAnswer("").
     setAnswer((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));

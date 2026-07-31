@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, WebSocket
 from fastapi.responses import JSONResponse, Response
 
 from lib import (
@@ -43,17 +43,17 @@ from lib import (
     explore_sessions,
     grammar_checker,
     kv_store,
-    livekit_tokens,
     llm_client,
     pii,
     prompts,
     session_scorer,
     tts_client,
+    voice_ws,
 )
 from lib.session_scorer import AudioFeatures
 from lib.code_switch.code_switch_text import TextCodeSwitchDetector
 from services.code_switch_service import log_detected_word
-from middlewares.auth_middleware import require_auth
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from middlewares.error_handler import AuthError
 from prisma.enums import LearningLevel
 from schemas.conversation_schemas import (
@@ -446,19 +446,34 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
     }
 
 
-# ── AIC-US-16 (voice mode): LiveKit room token + agent-fed transcript intake ────
-async def _voice_token(user_id: str, session_id: str) -> Dict:
-    session = await _get_session(session_id, user_id)  # raises SessionNotFoundError if not owned
-    # "timed" (not the bare default): Conversation is the only caller that attaches
-    # word_timings + duration_seconds to the outgoing message for pronunciation scoring
-    # (US-79/74) — see agent.py's transcribe_timed(). Scenario/Coaching/Interview Coach/
-    # Assessment discard those fields, so they stay on the cheaper default pipeline.
-    return livekit_tokens.mint_room_token(session["room_name"], identity=user_id, mode="timed")
+# ── Voice mode: WebSocket transport (backend/lib/voice_ws.py) ──────────────────
+# "timed": Conversation attaches word_timings + duration_seconds to the outgoing
+# message for pronunciation scoring (US-79/74) — the only caller that needs those.
+async def voice_socket(websocket: WebSocket, session_id: str):
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
+
+    gate = await _require_access(user_id)
+    if gate:
+        await websocket.close(code=4403, reason="Feature not accessible")
+        return
+
+    try:
+        await _get_session(session_id, user_id)
+    except SessionNotFoundError:
+        await websocket.close(code=4404, reason="Conversation session not found")
+        return
+
+    await websocket.accept()
+    # partial_interval_s: live-preview text streams in while the user keeps talking,
+    # instead of nothing appearing until the utterance ends.
+    await voice_ws.serve(websocket, mode="timed", partial_interval_s=1.2)
 
 
 async def _agent_send_message(session_id: str, req: SendMessageSchema, secret: Optional[str]) -> Dict:
-    """Internal-only intake for the voice_agent/ worker — not a browser caller, so it
-    can't hold the user's auth cookie. Trusted via a shared secret instead, and the
+    """Internal-only intake for a trusted server-side caller — not a browser caller, so
+    it can't hold the user's auth cookie. Trusted via a shared secret instead, and the
     user_id is read from the session itself, never taken from the caller."""
     expected = os.environ.get("INTERNAL_AGENT_SECRET")
     if not expected or secret != expected:
@@ -616,17 +631,6 @@ async def start_session(payload: StartConversationSchema, user_id: str = Depends
 
 async def send_message(session_id: str, payload: SendMessageSchema, user_id: str = Depends(require_auth)):
     return await _send_message(user_id, session_id, payload)
-
-
-async def voice_token(session_id: str, user_id: str = Depends(require_auth)):
-    gate = await _require_access(user_id)
-    if gate:
-        return gate
-    if not livekit_tokens.is_configured():
-        return JSONResponse(status_code=503, content={
-            "error": "Voice mode unavailable. Use text mode instead.",
-        })
-    return await _voice_token(user_id, session_id)
 
 
 async def agent_send_message(

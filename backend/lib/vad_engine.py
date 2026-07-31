@@ -1,7 +1,7 @@
 """
-Silero VAD wrapper — same model already trusted in backend/voice_agent/agent.py (there
-via livekit-plugins-silero for live rooms; here via the standalone `silero-vad` package
-since this module scores one-shot uploads, not a LiveKit room).
+Silero VAD wrapper — same model already trusted in backend/lib/voice_ws.py (there via
+the raw `silero_vad.VADIterator` for realtime WebSocket streams; here via the batch
+`get_speech_timestamps` since this module scores one-shot uploads, not a live stream).
 
 Used for: no-speech detection, incomplete-recording detection (last speech segment vs.
 total duration), and noise-floor/SNR estimation (speech-segment level vs. everything
