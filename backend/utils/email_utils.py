@@ -3,6 +3,7 @@ from email.message import EmailMessage
 from html import escape
 from io import BytesIO
 from pathlib import Path
+from typing import Iterable, Optional, Tuple
 
 import aiosmtplib
 from PIL import Image

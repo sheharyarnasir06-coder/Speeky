@@ -10,7 +10,7 @@ so this suite monkeypatches db access where a session needs to exist already.
 
 import pytest
 
-from lib import grammar_checker, kv_store, livekit_tokens, llm_client, pii, prompts, tts_client
+from lib import grammar_checker, kv_store, llm_client, pii, prompts, tts_client
 from middlewares.error_handler import AuthError
 from schemas.coaching_schemas import AudioFeaturesSchema
 from services import conversation_service as cvs
@@ -278,22 +278,12 @@ def test_tts_not_configured_when_model_missing(monkeypatch):
     assert tts_client.is_configured() is False
 
 
-# ── AIC-US-16: voice mode (LiveKit token + agent transcript intake) ────────────────
-def test_voice_token_not_configured_by_default(monkeypatch):
-    monkeypatch.delenv("LIVEKIT_URL", raising=False)
-    monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
-    monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
-    assert livekit_tokens.is_configured() is False
-
-
-async def test_voice_token_mints_token_for_session_room(monkeypatch):
-    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
-    monkeypatch.setenv("LIVEKIT_API_KEY", "fake-key")
-    monkeypatch.setenv("LIVEKIT_API_SECRET", "fake-secret")
-    session = await cvs._start_session("user-14", cvs.StartConversationSchema(topic_key="daily_life"))
-    result = await cvs._voice_token("user-14", session["session_id"])
-    assert result["room"] == session["session_id"]
-    assert result["token"]
+# Voice mode moved from LiveKit token-minting to a WebSocket transport
+# (backend/lib/voice_ws.py, served via conversation_service's websocket route) in a
+# later merge — LiveKit was dropped as a dependency, and services.conversation_service
+# no longer exposes _voice_token. The old token-minting tests above went with it;
+# no equivalent unit test exists yet for the WebSocket path (it's endpoint-level,
+# not a plain async function this test style can call directly).
 
 
 async def test_agent_send_message_rejects_wrong_secret(monkeypatch):
