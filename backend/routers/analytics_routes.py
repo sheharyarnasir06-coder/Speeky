@@ -1,13 +1,19 @@
 """Platform Analytics Dashboard endpoints.
 
-Two complementary surfaces share this router/prefix:
+Several complementary surfaces share this router/prefix:
   - PAD-US-10..14 (services/analytics_service.py): the live admin dashboard —
     overview, onboarding funnel, feature adoption, retention cross-filter,
     and a mock revenue view.
   - GAP-03/GAP-04 (services/platform_metrics_service.py): the shared
-    signup/retention/churn/revenue time-series pipeline the anomaly monitor
-    and scheduled reports both read from — exposed here as /snapshot, the
-    deep-link target every anomaly alert points at.
+    signup/retention/churn/revenue/active-users time-series pipeline the
+    anomaly monitor and scheduled reports both read from — exposed here as
+    /snapshot, the deep-link target every anomaly alert points at.
+  - US-205/206/207: tamper-evident audit trail, saved dashboard views, and
+    cross-source payment reconciliation.
+  - GAP-05 (services/regional_analytics_service.py): regional/locale
+    segmentation, read from precomputed rollups only.
+  - GAP-06 (services/period_comparison_service.py): WoW/MoM/YoY comparison,
+    built on the same platform_metrics_service pipeline as GAP-03/04.
 """
 
 from fastapi import APIRouter
@@ -33,11 +39,21 @@ from services.dashboard_view_service import (
     http_get_view,
     http_list_views,
 )
+from services.period_comparison_service import (
+    admin_add_incident,
+    admin_get_comparison,
+    admin_list_available_bases,
+    admin_list_incidents,
+)
 from services.platform_metrics_service import admin_get_snapshot
 from services.reconciliation_service import (
     http_get_reconciliation_status,
     http_resync_user,
     http_run_reconciliation,
+)
+from services.regional_analytics_service import (
+    admin_get_region_drilldown,
+    admin_get_regional_segmentation,
 )
 
 router = APIRouter()
@@ -74,3 +90,13 @@ router.add_api_route("/views/{view_id}", http_delete_view, methods=["DELETE"])
 router.add_api_route("/reconciliation/status", http_get_reconciliation_status, methods=["GET"])
 router.add_api_route("/reconciliation/run", http_run_reconciliation, methods=["POST"])
 router.add_api_route("/reconciliation/resync", http_resync_user, methods=["POST"])
+
+# GAP-05 (US-203) Regional / Locale-Based Segmentation Analytics
+router.add_api_route("/regional/segments", admin_get_regional_segmentation, methods=["GET"])
+router.add_api_route("/regional/{region_code}", admin_get_region_drilldown, methods=["GET"])
+
+# GAP-06 (US-204) Period-over-Period Comparative Analysis
+router.add_api_route("/comparison", admin_get_comparison, methods=["GET"])
+router.add_api_route("/comparison/available-bases", admin_list_available_bases, methods=["GET"])
+router.add_api_route("/incidents", admin_list_incidents, methods=["GET"])
+router.add_api_route("/incidents", admin_add_incident, methods=["POST"])

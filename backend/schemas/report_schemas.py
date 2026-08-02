@@ -4,7 +4,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 # Mirrors services/platform_metrics_service.METRIC_KEYS — see schemas/alert_schemas.py
 # for why this is a local closed vocabulary instead of an import from services.
-ALLOWED_METRIC_KEYS = ("daily_signups", "day1_retention", "day7_retention", "churn_rate", "revenue")
+ALLOWED_METRIC_KEYS = ("daily_signups", "day1_retention", "day7_retention", "churn_rate", "active_users", "revenue")
 ALLOWED_DATE_RANGE_TYPES = ("last_7_days", "last_30_days", "month_to_date")
 ALLOWED_RECURRENCES = ("weekly", "monthly", "none")
 ALLOWED_FORMATS = ("pdf", "csv", "both")

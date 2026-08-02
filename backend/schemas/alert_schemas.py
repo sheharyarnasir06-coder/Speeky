@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 # Mirrors services/platform_metrics_service.METRIC_KEYS — kept as its own closed
 # vocabulary here (schemas don't import services), same pattern as
 # schemas/category_schemas.py's ALLOWED_ICONS.
-ALLOWED_METRIC_KEYS = ("daily_signups", "day1_retention", "day7_retention", "churn_rate", "revenue")
+ALLOWED_METRIC_KEYS = ("daily_signups", "day1_retention", "day7_retention", "churn_rate", "active_users", "revenue")
 ALLOWED_THRESHOLD_TYPES = ("stddev_multiplier", "percent_change", "absolute")
 ALLOWED_DIRECTIONS = ("above", "below", "any")
 ALLOWED_CHANNELS = ("email", "slack", "push")

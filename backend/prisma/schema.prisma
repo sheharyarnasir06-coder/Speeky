@@ -151,6 +151,12 @@ model User {
   consentVersion    String?
   consentAcceptedAt DateTime?
 
+  // GAP-05 (US-203): signup-time country/locale code (ISO 3166-1 alpha-2, e.g. "US").
+  // No signup-flow UI or IP-geolocation service exists yet to populate this, so it
+  // starts null for every account — which is exactly the "Unknown Region" bucket
+  // (E-02) the regional segmentation story asks for, not a shortcut.
+  country String?
+
   @@map("users")
 }
 
@@ -694,6 +700,39 @@ model AuditLogEntry {
   @@index([targetType, targetId])
   @@index([actorId, createdAt])
   @@map("audit_log_entries")
+}
+
+// GAP-05 (US-203): precomputed daily regional rollup — the dashboard/API only ever
+// reads this table for regional views, never re-aggregates raw session tables live
+// (acceptance criterion). One row per (metric, region, day); regionCode "UNKNOWN"
+// is the E-02 bucket for users with no country on file. isLowVolume/isSpoofingFlagged
+// are computed at precompute time so the serve layer never re-derives them.
+model RegionalRollup {
+  id                String   @id @default(cuid())
+  metricKey         String
+  regionCode        String // ISO 3166-1 alpha-2, or "UNKNOWN"
+  date              DateTime
+  value             Float
+  sampleSize        Int
+  isLowVolume       Boolean  @default(false) // E-01: below MIN_REGION_SAMPLE_SIZE
+  isSpoofingFlagged Boolean  @default(false) // E-03
+  spoofingNote      String?
+  computedAt        DateTime @default(now())
+
+  @@unique([metricKey, regionCode, date])
+  @@index([metricKey, date])
+  @@map("regional_rollups")
+}
+
+// GAP-05 (US-203) E-04: base-currency normalization rates. No FX-rate provider is
+// connected — seeded with illustrative rates by the scheduler's refresh job until a
+// real one (e.g. exchangerate-api, Stripe FX) is wired in.
+model CurrencyRate {
+  currencyCode String   @id // ISO 4217, e.g. "EUR"
+  rateToBase   Float // 1 unit of currencyCode -> this many units of the base currency (USD)
+  updatedAt    DateTime @updatedAt
+
+  @@map("currency_rates")
 }
 
 model RefreshToken {

@@ -65,6 +65,44 @@ async def _run_report_dispatch() -> None:
         logger.error(f"Report dispatch tick failed: {exc}")
 
 
+async def _run_regional_rollup() -> None:
+    """GAP-05: recomputes RegionalRollup — the dashboard only ever reads this
+    precomputed table, never re-aggregates raw session tables on request."""
+    if not await _try_acquire_lock("regional_rollup"):
+        return
+    try:
+        from services.regional_analytics_service import recompute_rollups
+
+        result = await recompute_rollups()
+        logger.info(f"Regional rollup tick: {result}")
+    except Exception as exc:
+        logger.error(f"Regional rollup tick failed: {exc}")
+
+
+async def _run_currency_rate_refresh() -> None:
+    """GAP-05 E-04: refreshes the CurrencyRate table. STUB_FX_RATES
+    (lib/currency.py) stands in for a real FX-rate provider until one is
+    wired in — this job just keeps the table populated from that stub so the
+    normalization query path is real and exercised end-to-end."""
+    if not await _try_acquire_lock("currency_rate_refresh"):
+        return
+    try:
+        from datetime import datetime, timezone as tz
+
+        from lib.currency import STUB_FX_RATES
+        from lib.prisma_client import db
+
+        for code, rate in STUB_FX_RATES.items():
+            existing = await db.currencyrate.find_unique(where={"currencyCode": code})
+            if existing:
+                await db.currencyrate.update(where={"currencyCode": code}, data={"rateToBase": rate})
+            else:
+                await db.currencyrate.create(data={"currencyCode": code, "rateToBase": rate})
+        logger.info(f"Currency rate refresh tick: {len(STUB_FX_RATES)} rates ({datetime.now(tz.utc).isoformat()})")
+    except Exception as exc:
+        logger.error(f"Currency rate refresh tick failed: {exc}")
+
+
 def start_scheduler() -> AsyncIOScheduler:
     global _scheduler
     if _scheduler is not None:
@@ -72,12 +110,19 @@ def start_scheduler() -> AsyncIOScheduler:
 
     anomaly_interval = int(os.environ.get("ANOMALY_CHECK_INTERVAL_MINUTES", "15"))
     report_interval = int(os.environ.get("REPORT_DISPATCH_INTERVAL_MINUTES", "5"))
+    regional_rollup_interval = int(os.environ.get("REGIONAL_ROLLUP_INTERVAL_HOURS", "24"))
+    currency_refresh_interval = int(os.environ.get("CURRENCY_REFRESH_INTERVAL_HOURS", "24"))
 
     _scheduler = AsyncIOScheduler(timezone="UTC")
     _scheduler.add_job(_run_anomaly_monitor, "interval", minutes=anomaly_interval, id="anomaly_monitor", max_instances=1)
     _scheduler.add_job(_run_report_dispatch, "interval", minutes=report_interval, id="report_dispatch", max_instances=1)
+    _scheduler.add_job(_run_regional_rollup, "interval", hours=regional_rollup_interval, id="regional_rollup", max_instances=1)
+    _scheduler.add_job(_run_currency_rate_refresh, "interval", hours=currency_refresh_interval, id="currency_rate_refresh", max_instances=1)
     _scheduler.start()
-    logger.info(f"Scheduler started (anomaly every {anomaly_interval}m, reports every {report_interval}m)")
+    logger.info(
+        f"Scheduler started (anomaly every {anomaly_interval}m, reports every {report_interval}m, "
+        f"regional rollup every {regional_rollup_interval}h, currency refresh every {currency_refresh_interval}h)"
+    )
     return _scheduler
 
 

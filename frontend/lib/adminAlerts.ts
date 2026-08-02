@@ -2,7 +2,7 @@ import { api } from "./api";
 
 // GAP-03 (US-201): Anomaly Detection & Proactive Alerting.
 
-export type MetricKey = "daily_signups" | "day1_retention" | "day7_retention" | "churn_rate" | "revenue";
+export type MetricKey = "daily_signups" | "day1_retention" | "day7_retention" | "churn_rate" | "active_users" | "revenue";
 export type ThresholdType = "stddev_multiplier" | "percent_change" | "absolute";
 export type ThresholdDirection = "above" | "below" | "any";
 export type AlertChannel = "email" | "slack" | "push";
@@ -13,6 +13,7 @@ export const METRIC_OPTIONS: { value: MetricKey; label: string }[] = [
   { value: "day1_retention", label: "Day-1 Retention" },
   { value: "day7_retention", label: "Day-7 Retention" },
   { value: "churn_rate", label: "Churn Rate" },
+  { value: "active_users", label: "Active Users" },
   { value: "revenue", label: "Revenue" },
 ];
 

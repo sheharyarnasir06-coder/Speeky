@@ -47,6 +47,8 @@ import {
 import { getSnapshot, type DashboardSnapshot } from "@/lib/adminAnalytics";
 import { METRIC_OPTIONS, type MetricKey } from "@/lib/adminAlerts";
 import { useAuth } from "@/contexts/AuthContext";
+import { PeriodComparisonToggle } from "@/components/analytics/PeriodComparisonToggle";
+import { RegionComparisonView } from "@/components/analytics/RegionComparisonView";
 import { SavedViewsBar } from "@/components/analytics/SavedViewsBar";
 import { ReconciliationBadge } from "@/components/analytics/ReconciliationBadge";
 
@@ -58,7 +60,7 @@ const DAY_OPTIONS = [
   { value: "365", label: "Last 365 days" },
 ];
 
-type Tab = "overview" | "funnel" | "usage" | "cross-filter" | "signals" | "revenue";
+type Tab = "overview" | "funnel" | "usage" | "cross-filter" | "signals" | "regional" | "revenue";
 
 const HIGH_DROP_OFF_THRESHOLD = 50;
 
@@ -93,12 +95,13 @@ function SplitBar({ totalPct, innerPct, title }: { totalPct: number; innerPct: n
   );
 }
 
-function StatTile({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
+function StatTile({ label, value, hint, children }: { label: string; value: React.ReactNode; hint?: string; children?: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-surface-elevated p-5 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-2 font-serif text-3xl font-semibold text-foreground">{value}</p>
       {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+      {children ? <div className="mt-2">{children}</div> : null}
     </div>
   );
 }
@@ -276,6 +279,7 @@ export default function AdminAnalyticsPage() {
         <TabButton active={tab === "usage"} onClick={() => setTab("usage")}>Feature Usage</TabButton>
         <TabButton active={tab === "cross-filter"} onClick={() => setTab("cross-filter")}>Retention Cross-Filter</TabButton>
         <TabButton active={tab === "signals"} onClick={() => setTab("signals")}>Growth Signals</TabButton>
+        <TabButton active={tab === "regional"} onClick={() => setTab("regional")}>Segment by Region</TabButton>
         {isSuperAdmin ? (
           <TabButton active={tab === "revenue"} onClick={() => setTab("revenue")}>
             <span className="inline-flex items-center gap-1">
@@ -291,6 +295,7 @@ export default function AdminAnalyticsPage() {
       {tab === "usage" ? <FeatureUsageTab days={days} /> : null}
       {tab === "cross-filter" ? <CrossFilterTab days={days} /> : null}
       {tab === "signals" ? <SignalsTab focusedMetric={focusedMetric} dateFrom={dateFrom} dateTo={dateTo} /> : null}
+      {tab === "regional" ? <RegionComparisonView /> : null}
       {tab === "revenue" && isSuperAdmin ? <RevenueTab days={days} /> : null}
     </div>
   );
@@ -354,6 +359,11 @@ function SignalsTab({ focusedMetric, dateFrom, dateTo }: { focusedMetric: Metric
                     {isPercentMetric(key) ? `${latest}%` : latest.toLocaleString()}
                   </p>
                 ) : null}
+                {series?.available ? (
+                  <div className="mt-2">
+                    <PeriodComparisonToggle metric={key} upIsBad={key === "churn_rate"} />
+                  </div>
+                ) : null}
               </div>
               {series && !series.available ? <Badge tone="neutral">No data source yet</Badge> : null}
               {isFocused ? <Badge tone="danger">Alert source</Badge> : null}
@@ -412,12 +422,16 @@ function OverviewTab({ days }: { days: number }) {
   return (
     <div className="flex flex-col gap-8">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatTile label="Active users" value={data.active_users} hint={`Trailing ${data.period_days} days`} />
+        <StatTile label="Active users" value={data.active_users} hint={`Trailing ${data.period_days} days`}>
+          <PeriodComparisonToggle metric="active_users" />
+        </StatTile>
         <StatTile
           label="7-day retention"
           value={data.retention_rate === null ? "TBD" : `${data.retention_rate}%`}
           hint={data.retention_rate === null ? "No cohort old enough yet" : "Signed up 7+ days ago, still active"}
-        />
+        >
+          <PeriodComparisonToggle metric="day7_retention" />
+        </StatTile>
         <StatTile label="Practice sessions" value={data.daily_sessions.reduce((sum, d) => sum + d.count, 0)} hint="Across every module" />
       </div>
 

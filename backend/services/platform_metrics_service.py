@@ -19,6 +19,9 @@ Metrics:
   - day7_retention  : same, within 7 days.
   - churn_rate      : % of users active in the [day-28, day-14) window with
                        no activity in the following [day-14, day) window.
+  - active_users    : count of distinct users with >=1 completed session that day.
+                       Added for GAP-06 (US-204)'s period-over-period comparison —
+                       the flagship "Active Users +12% vs last 30 days" example.
   - revenue         : NO BILLING/SUBSCRIPTION MODEL EXISTS ANYWHERE IN THIS
                        CODEBASE (checked schema.prisma) — this is a flagged
                        placeholder (always 0, unavailable=True) so thresholds/
@@ -47,15 +50,17 @@ DAILY_SIGNUPS = "daily_signups"
 DAY1_RETENTION = "day1_retention"
 DAY7_RETENTION = "day7_retention"
 CHURN_RATE = "churn_rate"
+ACTIVE_USERS = "active_users"
 REVENUE = "revenue"
 
-METRIC_KEYS = (DAILY_SIGNUPS, DAY1_RETENTION, DAY7_RETENTION, CHURN_RATE, REVENUE)
+METRIC_KEYS = (DAILY_SIGNUPS, DAY1_RETENTION, DAY7_RETENTION, CHURN_RATE, ACTIVE_USERS, REVENUE)
 
 METRIC_LABELS: Dict[str, str] = {
     DAILY_SIGNUPS: "Daily Signups",
     DAY1_RETENTION: "Day-1 Retention",
     DAY7_RETENTION: "Day-7 Retention",
     CHURN_RATE: "Churn Rate",
+    ACTIVE_USERS: "Active Users",
     REVENUE: "Revenue",
 }
 
@@ -108,6 +113,19 @@ SELECT days.day AS day,
 FROM days
 LEFT JOIN cohort ON cohort.signup_day = days.day
 LEFT JOIN completions ON completions."userId" = cohort."userId"
+GROUP BY days.day
+ORDER BY days.day
+"""
+
+_SQL_ACTIVE_USERS = f"""
+WITH days AS (
+  SELECT d::date AS day FROM generate_series($1::date, $2::date, interval '1 day') AS d
+),
+{_COMPLETIONS_CTE}
+SELECT days.day AS day, COUNT(DISTINCT completions."userId")::int AS value
+FROM days
+LEFT JOIN completions
+  ON completions."completedAt" >= days.day AND completions."completedAt" < days.day + interval '1 day'
 GROUP BY days.day
 ORDER BY days.day
 """
@@ -165,6 +183,11 @@ async def _retention_series(start: date, end: date, within_days: int) -> List[Me
     return points
 
 
+async def _active_users_series(start: date, end: date) -> List[MetricPoint]:
+    rows = await db.query_raw(_SQL_ACTIVE_USERS, start.isoformat(), end.isoformat())
+    return [{"date": _day_str(r["day"]), "value": float(r["value"])} for r in rows]
+
+
 async def _churn_series(start: date, end: date) -> List[MetricPoint]:
     rows = await db.query_raw(_SQL_CHURN, start.isoformat(), end.isoformat())
     points: List[MetricPoint] = []
@@ -193,6 +216,8 @@ async def get_metric_timeseries(metric_key: str, start: date, end: date) -> List
         return await _retention_series(start, end, within_days=7)
     if metric_key == CHURN_RATE:
         return await _churn_series(start, end)
+    if metric_key == ACTIVE_USERS:
+        return await _active_users_series(start, end)
     if metric_key == REVENUE:
         return _revenue_series(start, end)
     raise ValueError(f"Unknown metric_key: {metric_key}")
