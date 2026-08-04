@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
+import { ContentIntelligencePanel } from "@/components/admin/ContentIntelligencePanel";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { ApiError } from "@/lib/api";
@@ -99,6 +100,7 @@ export default function AdminScenariosPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [promptTouched, setPromptTouched] = React.useState(false);
   const [editingScenario, setEditingScenario] = React.useState<CustomScenario | null>(null);
   const [form, setForm] = React.useState<CustomScenarioInput>(EMPTY_FORM);
   const [vocabText, setVocabText] = React.useState("");
@@ -142,7 +144,19 @@ export default function AdminScenariosPage() {
     setPreviewError(null);
   }
 
+  // CM-US-10 E-01/E-03: the fields a template genuinely cannot publish without.
+  // Mirrors the server-side validators rather than adding new rules — the server
+  // stays the authority, this is purely so the admin isn't sent to a round trip
+  // to be told something the form already knows.
+  const missingRequired = [
+    !form.title.trim() && "a title",
+    !form.category.trim() && "a category",
+    !form.system_prompt.trim() && "AI instructions",
+  ].filter(Boolean) as string[];
+  const canPublish = missingRequired.length === 0;
+
   function openCreate() {
+    setPromptTouched(false);
     setEditingId(null);
     setEditingScenario(null);
     setForm({ ...EMPTY_FORM, category: categories[0]?.name ?? "" });
@@ -154,6 +168,7 @@ export default function AdminScenariosPage() {
   }
 
   function openEdit(scenario: CustomScenario) {
+    setPromptTouched(false);
     setEditingId(scenario.id);
     setEditingScenario(scenario);
     setForm({
@@ -199,6 +214,8 @@ export default function AdminScenariosPage() {
     setPreviewLoading(true);
     try {
       const { reply } = await previewCustomScenario({
+        // Attribute the run to the saved scenario (US-198 sandbox success rate).
+        scenario_id: editingId ?? undefined,
         persona: form.persona || "Persona",
         system_prompt: form.system_prompt || "Stay in character.",
         opening_line: form.opening_line,
@@ -227,6 +244,8 @@ export default function AdminScenariosPage() {
     setPreviewLoading(true);
     try {
       const { reply } = await previewCustomScenario({
+        // Attribute the run to the saved scenario (US-198 sandbox success rate).
+        scenario_id: editingId ?? undefined,
         persona: form.persona || "Persona",
         system_prompt: form.system_prompt || "Stay in character.",
         opening_line: form.opening_line,
@@ -559,6 +578,11 @@ export default function AdminScenariosPage() {
             value={form.system_prompt}
             maxLength={MAX_PROMPT_CHARS}
             onChange={(e) => updateForm({ system_prompt: e.target.value, tested: false })}
+            onBlur={() => setPromptTouched(true)}
+            // CM-US-10 E-01: an empty prompt turns the field red. Only after the
+            // admin has actually left it empty — a brand-new form should not open
+            // already shouting about fields nobody has reached yet.
+            error={promptTouched && !form.system_prompt.trim() ? "Add the AI instructions — a scenario cannot publish without them." : undefined}
             hint={`The actual instructions given to the AI: who it plays, how it should react, what the learner must accomplish. ${form.system_prompt.length}/${MAX_PROMPT_CHARS} characters. Never ask learners for real passwords, card numbers, or other sensitive data.`}
           />
           <Input
@@ -712,9 +736,22 @@ export default function AdminScenariosPage() {
             </div>
           ) : null}
 
-          <Button size="lg" loading={saving} onClick={() => handleSave()}>
+          {/* CM-US-10 E-01 + E-03: Publish is disabled outright while a required
+              field is missing, so the admin cannot even attempt an invalid save. */}
+          <Button
+            size="lg"
+            loading={saving}
+            disabled={!canPublish}
+            title={canPublish ? undefined : "Add a title, category and AI instructions first."}
+            onClick={() => handleSave()}
+          >
             {editingId ? "Save Changes" : "Publish Scenario"}
           </Button>
+          {!canPublish ? (
+            <p className="text-xs text-muted-foreground">
+              Still needed: {missingRequired.join(", ")}.
+            </p>
+          ) : null}
 
           {editingId ? (
             <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3">
@@ -780,6 +817,12 @@ export default function AdminScenariosPage() {
                 </div>
               ) : null}
             </div>
+          ) : null}
+
+          {/* Sprint 3 content intelligence (US-192/193/195/198). Saved scenarios
+              only — every panel keys off a persisted scenario id. */}
+          {editingId && editingScenario ? (
+            <ContentIntelligencePanel scenario={editingScenario} />
           ) : null}
         </div>
       </Modal>

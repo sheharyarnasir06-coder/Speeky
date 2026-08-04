@@ -1,7 +1,0 @@
-node_modules
-.next
-.gitignore
-Dockerfile
-npm-debug.log
-README.md
-.env*

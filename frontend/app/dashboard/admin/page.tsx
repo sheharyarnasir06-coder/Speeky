@@ -24,6 +24,13 @@ const CARDS: AdminHubCard[] = [
       "Author Scenario-Based Learning templates: prompt, persona, vocabulary, difficulty — test in the sandbox, evaluate quality and confidence, and manage versions.",
   },
   {
+    href: "/dashboard/admin/content-intelligence",
+    icon: BarChart3,
+    title: "Content Intelligence",
+    description:
+      "Track how published templates perform for learners — completion, confidence, vocabulary success and satisfaction — and get alerted when one starts drifting from its own baseline.",
+  },
+  {
     href: "/dashboard/admin/categories",
     icon: FolderTree,
     title: "Categories",
@@ -95,7 +102,7 @@ export default function AdminHubPage() {
   });
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex animate-fade-up flex-col gap-8">
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground">
           Admin Hub

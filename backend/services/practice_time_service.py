@@ -2,9 +2,10 @@
 Practice Time Milestones — PDG-US-15.
 
 Lifetime practice time is credited incrementally via 60-second heartbeat
-pings from an active session (Scenario-Based Learning, for now — same scope
-as vocabulary_progress_service), not from a session's wall-clock
-createdAt/completedAt span. This gives the exception handling for free:
+pings from an active session (Scenario-Based Learning, AI Conversation,
+Workplace Coaching, Interview Coach, Public Speaking — see
+schemas.practice_time_schemas.ALLOWED_SESSION_TYPES), not from a session's
+wall-clock createdAt/completedAt span. This gives the exception handling for free:
 
 - E-01 (app crash mid-session): each ping already credited its slice before
   the crash, so partial time survives regardless of whether the session ever

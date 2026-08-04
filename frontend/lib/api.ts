@@ -1,4 +1,5 @@
-export const API_URL = process.env.NEXT_PUBLIC_APP_API_URL!;
+export const API_URL =
+  process.env.NEXT_PUBLIC_APP_API_URL || "http://localhost:8000/api";
 
 // Backend serves uploads (e.g. avatars) from its origin, not under /api.
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");

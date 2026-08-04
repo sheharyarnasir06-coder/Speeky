@@ -105,7 +105,7 @@ export default function ResumeJdPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-2xl animate-fade-up flex-col gap-6">
       <div>
         <h1 className="font-serif text-h1 font-semibold text-foreground">
           Resume &amp; Job Description
@@ -239,7 +239,7 @@ export default function ResumeJdPage() {
             >
               {mismatchResult.note} ({Math.round(mismatchResult.overlap_score * 100)}% overlap)
             </div>
-            <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="grid grid-cols-1 gap-4 text-xs sm:grid-cols-2">
               <div>
                 <p className="font-medium text-foreground">Your skills</p>
                 <p className="mt-1 text-muted-foreground">

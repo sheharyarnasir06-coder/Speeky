@@ -61,7 +61,7 @@ export function StreakNavIcon() {
       <Flame
         className={cn(
           "h-5 w-5",
-          done ? "fill-warning text-warning" : "text-muted-foreground",
+          done ? "flame-active fill-warning text-warning" : "text-muted-foreground",
         )}
         aria-hidden="true"
       />

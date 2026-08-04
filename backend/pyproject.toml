@@ -34,6 +34,8 @@ dependencies = [
     "praat-parselmouth>=0.4.7",
     "numpy>=1.26",
     "pronouncing>=0.2.0",
+    "torch", # Need to do explicit for torch-cpu.
+    "torchaudio",
     # GAP-03/GAP-04: anomaly-alert monitoring + scheduled-report dispatch. APScheduler
     # chosen over Celery — no Redis/broker exists in docker-compose.yml today.
     "apscheduler>=3.10",
@@ -51,6 +53,15 @@ prisma-generate = "prisma generate"
 prisma-migrate = "prisma migrate dev"
 prisma-pull = "prisma db pull"
 prisma-studio = "prisma studio"
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchaudio = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true  # To avoid side effects (like other projects also resolved from this index)
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

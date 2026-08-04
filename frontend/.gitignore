@@ -10,6 +10,8 @@ coverage/
 tsconfig.tsbuildinfo
 
 # Playwright UI audit: minted QA JWT + run artifacts, never commit
-./e2e/**
+/e2e/.auth.json
 /test-results/
 /playwright-report/
+/e2e
+

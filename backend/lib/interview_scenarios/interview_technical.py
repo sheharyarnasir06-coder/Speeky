@@ -29,7 +29,6 @@ WHAT'S REAL vs. NOT:
 """
 
 import logging
-import time
 from typing import Callable, Dict, List, Optional
 
 logging.basicConfig(level=logging.INFO)

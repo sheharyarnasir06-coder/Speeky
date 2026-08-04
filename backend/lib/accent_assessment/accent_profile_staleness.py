@@ -20,8 +20,8 @@ Constants:
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Dict, Optional
 
 from lib.accent_assessment.profile_pipeline import (
     AccentAssessmentResult,

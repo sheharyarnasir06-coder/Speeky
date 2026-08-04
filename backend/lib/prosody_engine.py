@@ -22,7 +22,15 @@ from lib.speech_config import SpeechConfig
 @dataclass
 class ProsodyData:
     pitch_times: np.ndarray
-    pitch_hz: np.ndarray  # 0.0 at unvoiced frames
+    pitch_hz: np.ndarray  # 0.0 at unvoiced frames -- RAW Praat output, octave-jump-prone
+    # Same shape/zeros as pitch_hz, but each voiced frame folded to within an octave of
+    # the recording's median pitch (see _fold_to_octave). Consumers that care about a
+    # single speaker's actual pitch *contour* (e.g. detect_multiple_voices' run-to-run
+    # comparison) should read this, not pitch_hz -- raw pitch_hz still exists for
+    # consumers measuring genuine variance/flatness (recording_engine's synthetic-pitch
+    # check, accent_calibration_service's breakdown fallback), where octave-folding would
+    # artificially shrink the very variance they're measuring.
+    pitch_hz_corrected: np.ndarray
     intensity_times: np.ndarray
     intensity_db: np.ndarray
     mean_pitch_hz: float
@@ -35,6 +43,18 @@ class ProsodyData:
         return len(self.syllable_nuclei_times)
 
 
+def _fold_to_octave(values: np.ndarray, reference: float) -> np.ndarray:
+    """Halve/double each value until within ~6 semitones (factor ~1.41) of `reference`.
+    Corrects Praat's octave-jump artifact (halving/doubling F0 on creaky sentence-final
+    voicing) -- `values` must be all-positive; `reference` must be > 0."""
+    corrected = values.astype(np.float64).copy()
+    hi, lo = reference * 1.41, reference / 1.41
+    for _ in range(4):  # covers up to 4 octaves of error
+        corrected = np.where(corrected > hi, corrected / 2.0, corrected)
+        corrected = np.where(corrected < lo, corrected * 2.0, corrected)
+    return corrected
+
+
 def analyze(waveform: np.ndarray, sample_rate: int) -> ProsodyData:
     sound = parselmouth.Sound(waveform.astype(np.float64), sampling_frequency=sample_rate)
     pitch = sound.to_pitch()
@@ -45,8 +65,10 @@ def analyze(waveform: np.ndarray, sample_rate: int) -> ProsodyData:
     intensity_db = intensity.values[0]
     intensity_times = intensity.xs()
 
-    voiced = pitch_hz[pitch_hz > 0]
+    voiced_mask = pitch_hz > 0
+    voiced = pitch_hz[voiced_mask]
     mean_pitch = float(np.mean(voiced)) if voiced.size else 0.0
+    pitch_hz_corrected = pitch_hz.copy()
     if voiced.size >= 2 and mean_pitch > 0:
         # Octave-correct before measuring spread. Praat's pitch tracker octave-jumps
         # (halving/doubling F0) on creaky sentence-final voicing, which used to blow the
@@ -54,13 +76,9 @@ def analyze(waveform: np.ndarray, sample_rate: int) -> ProsodyData:
         # downstream tone score. Fold each voiced frame to within a semitone-octave of the
         # MEDIAN (robust to those jumps), then measure the 5-95 percentile spread.
         median_pitch = float(np.median(voiced))
-        corrected = voiced.astype(np.float64).copy()
         if median_pitch > 0:
-            # halve/double until within ±6 st (a factor of ~1.41) of the median
-            hi, lo = median_pitch * 1.41, median_pitch / 1.41
-            for _ in range(4):  # covers up to 4 octaves of error
-                corrected = np.where(corrected > hi, corrected / 2.0, corrected)
-                corrected = np.where(corrected < lo, corrected * 2.0, corrected)
+            corrected = _fold_to_octave(voiced, median_pitch)
+            pitch_hz_corrected[voiced_mask] = corrected
             semitones = 12.0 * np.log2(corrected / median_pitch)
         else:
             semitones = 12.0 * np.log2(voiced / mean_pitch)
@@ -73,6 +91,7 @@ def analyze(waveform: np.ndarray, sample_rate: int) -> ProsodyData:
     return ProsodyData(
         pitch_times=pitch_times,
         pitch_hz=pitch_hz,
+        pitch_hz_corrected=pitch_hz_corrected,
         intensity_times=intensity_times,
         intensity_db=intensity_db,
         mean_pitch_hz=mean_pitch,
@@ -162,8 +181,18 @@ def detect_multiple_voices(prosody: ProsodyData, config: SpeechConfig) -> bool:
     speaker recording (tests/test_recording_engine.py's fixture-based coverage can't
     catch this class of bug -- it only showed up running the real model against real
     audio) that was otherwise a false positive before this filter.
+
+    Reads pitch_hz_corrected (octave-folded to the recording's median), not raw
+    pitch_hz -- a longer-lived octave-jump blip (a whole creaky-voiced run, not just the
+    1-2 frame case the min-run-seconds filter above already catches) still reads as a
+    ~1-octave jump on raw pitch and combines with genuine phrase-boundary pitch
+    variation to clear the semitone threshold on real single-speaker audio. Trade-off:
+    folding is anchored to the whole recording's median, so a genuine second speaker
+    within ~6-11 semitones of the dominant speaker (plausible, short of a full octave)
+    could now go undetected where it wouldn't have before -- accepted, since a false
+    rejection of a real single speaker is the more costly failure here.
     """
-    runs = _voiced_runs(prosody.pitch_hz)
+    runs = _voiced_runs(prosody.pitch_hz_corrected)
     significant_runs = [
         (start, end)
         for start, end in runs
@@ -174,7 +203,7 @@ def detect_multiple_voices(prosody: ProsodyData, config: SpeechConfig) -> bool:
 
     medians = []
     for start, end in significant_runs:
-        voiced_vals = prosody.pitch_hz[start:end]
+        voiced_vals = prosody.pitch_hz_corrected[start:end]
         voiced_vals = voiced_vals[voiced_vals > 0]
         if voiced_vals.size:
             medians.append(float(np.median(voiced_vals)))

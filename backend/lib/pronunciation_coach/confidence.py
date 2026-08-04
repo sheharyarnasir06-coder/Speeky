@@ -9,8 +9,7 @@ import logging
 from collections import Counter
 from typing import Any, Dict, List, Optional
 from datetime import datetime
-from dataclasses import dataclass, field
-import json
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 

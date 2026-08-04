@@ -122,7 +122,7 @@ export default function ProgressPage() {
   const isUnlocked = access?.access_level === "full_access";
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex animate-fade-up flex-col gap-8">
       <div>
         <h1 className="font-serif text-h1 font-semibold text-foreground">
           Progress Dashboard

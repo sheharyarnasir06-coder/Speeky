@@ -10,7 +10,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
+import { LiveWordHighlight } from "@/components/dashboard/LiveWordHighlight";
 import { WordByWordDisplay } from "@/components/dashboard/WordByWordDisplay";
+import { usePronunciationLivePreview } from "@/lib/usePronunciationLivePreview";
+import { buildVoiceWsUrl } from "@/lib/useVoiceSocket";
 import { cn } from "@/lib/utils";
 import {
   getTargetPassage,
@@ -39,6 +42,19 @@ export default function AccentAssessmentPage() {
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Accent Assessment",
   });
+
+  // Live word-by-word preview while recording — cosmetic only, submitPassageAssessment
+  // (via the MediaRecorder blob upload) below is still what actually scores the read.
+  const passageIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    passageIdRef.current = passageData?.passage_id ?? null;
+  }, [passageData]);
+  const getPreviewWsUrl = React.useCallback(() => {
+    if (!passageIdRef.current) return null;
+    return buildVoiceWsUrl(`/accent-assessment/passages/${passageIdRef.current}/preview-ws`);
+  }, []);
+  const targetWords = passageData ? passageData.text.split(/\s+/).filter(Boolean) : [];
+  const livePreview = usePronunciationLivePreview(targetWords, getPreviewWsUrl);
 
   const loadPassage = React.useCallback(async () => {
     setIsLoading(true);
@@ -76,6 +92,8 @@ export default function AccentAssessmentPage() {
       mediaRecorderRef.current = recorder;
       recorder.start();
       setIsRecording(true);
+      livePreview.reset();
+      void livePreview.start(); // fire-and-forget — cosmetic, must never delay/block the real recording
     } catch {
       setError("Microphone permission denied or unsupported.");
     }
@@ -83,6 +101,7 @@ export default function AccentAssessmentPage() {
 
   const handleStopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
+      livePreview.stop();
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
@@ -142,7 +161,7 @@ export default function AccentAssessmentPage() {
     : null;
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-2xl animate-fade-up flex-col gap-6">
       {gate}
       <div className="flex flex-col gap-1">
         <h1 className="font-serif text-h1 font-semibold text-foreground">
@@ -180,7 +199,13 @@ export default function AccentAssessmentPage() {
           </div>
 
           <p className="mt-4 font-serif text-lg leading-relaxed text-foreground">
-            "{passageData.text}"
+            "
+            {isRecording ? (
+              <LiveWordHighlight words={targetWords} statuses={livePreview.wordStatuses} />
+            ) : (
+              passageData.text
+            )}
+            "
           </p>
 
           <div className="mt-8 flex flex-col items-center gap-4">

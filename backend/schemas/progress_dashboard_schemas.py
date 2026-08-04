@@ -2,7 +2,7 @@
 Progress Dashboard Tracking Schemas (PDG-US-10)
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 

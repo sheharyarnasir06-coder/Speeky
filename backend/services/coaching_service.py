@@ -670,7 +670,9 @@ async def voice_socket(websocket: WebSocket, session_id: str):
         return
 
     await websocket.accept()
-    await voice_ws.serve(websocket, mode="transcript")
+    # partial_interval_s: live-preview text streams in while the user keeps talking,
+    # instead of nothing appearing until the utterance ends.
+    await voice_ws.serve(websocket, mode="transcript", partial_interval_s=1.2)
 
 
 async def roleplay_turn(session_id: str, payload: RoleplayTurnSchema,

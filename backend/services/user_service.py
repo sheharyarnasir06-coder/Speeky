@@ -13,7 +13,7 @@ from PIL.Image import DecompressionBombError
 from starlette.concurrency import run_in_threadpool
 
 from lib.prisma_client import db
-from middlewares.auth_middleware import require_admin, require_auth, require_super_admin
+from middlewares.auth_middleware import require_auth, require_super_admin
 from prisma.enums import Role
 from schemas.user_schemas import (
     ConsentStatusSchema,

@@ -265,7 +265,7 @@ function ProviderCard({
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 rounded-xl bg-surface p-3 text-xs">
+      <div className="grid grid-cols-1 gap-4 rounded-xl bg-surface p-3 text-xs sm:grid-cols-2">
         <div>
           <span className="text-muted-foreground">Internal Analytics:</span>{" "}
           <strong className="font-semibold text-foreground">${prov.internal_revenue.toLocaleString()}</strong> ({prov.internal_count} txns)

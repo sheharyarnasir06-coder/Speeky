@@ -9,10 +9,10 @@ __pycache__/
 *.env.*
 *.zip
 Dockerfile*
+caddy
 docker-compose.yml
 .dockerignore
 *.docx
-voice_agent/models/
 
 !.env.example
 !uploads/avatars/

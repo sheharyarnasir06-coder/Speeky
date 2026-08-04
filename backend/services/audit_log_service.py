@@ -16,7 +16,6 @@ from lib import kv_store
 from lib.admin_constants import (
     ACTION_EXPORT,
     ACTION_FILTER,
-    ACTION_VIEW_RESTRICTED,
     AUDIT_LOG_NS,
     GENESIS_HASH,
     RESTRICTED_ANALYTICS_MODULES,

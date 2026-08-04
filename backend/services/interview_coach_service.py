@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import Depends, WebSocket
-from fastapi.responses import JSONResponse
 
 from lib import ai_client, explore_sessions, kv_store, voice_ws
 from middlewares.auth_middleware import require_auth, ws_require_auth
@@ -354,7 +353,9 @@ async def voice_socket(websocket: WebSocket, session_id: str):
         return
 
     await websocket.accept()
-    await voice_ws.serve(websocket, mode="transcript")
+    # partial_interval_s: live-preview text streams in while the user keeps talking,
+    # instead of nothing appearing until the utterance ends.
+    await voice_ws.serve(websocket, mode="transcript", partial_interval_s=1.2)
 
 
 async def _generate_next_question(session: dict, speaker: str, instruction: str) -> str:

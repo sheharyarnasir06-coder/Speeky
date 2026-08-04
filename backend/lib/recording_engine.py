@@ -91,11 +91,19 @@ def analyze_recording(audio_bytes: bytes, config: SpeechConfig, initial_prompt: 
     decoded = audio_io.decode_audio_bytes(audio_bytes, config.audio_sample_rate)
     waveform, sample_rate = decoded.waveform, decoded.sample_rate
 
-    vad_result = vad_engine.detect_speech_segments(waveform, sample_rate, config)
-    avg_dbfs = audio_io.rms_dbfs(waveform)
-    noise_floor_dbfs, snr_db = vad_engine.estimate_noise_and_snr(waveform, sample_rate, vad_result)
+    # Denoised copy for the speech/level/SNR gates and prosody (pitch tracking) -- fan/
+    # HVAC rumble sits under the speech for the whole clip (not just the gaps), which
+    # both drags the SNR check below threshold on an otherwise clean take and, if the hum
+    # has any tonal component, can read as a spurious "voiced" run to Praat's pitch
+    # tracker. The 40Hz cutoff (audio_io._RUMBLE_CUTOFF_HZ) stays well clear of any human
+    # voice fundamental (lowest adult male ~85Hz), so it's safe for pitch tracking too.
+    # STT below still reads the original waveform -- no reason to touch transcription.
+    gate_waveform = audio_io.remove_low_frequency_rumble(waveform, sample_rate)
+    vad_result = vad_engine.detect_speech_segments(gate_waveform, sample_rate, config)
+    avg_dbfs = audio_io.rms_dbfs(gate_waveform)
+    noise_floor_dbfs, snr_db = vad_engine.estimate_noise_and_snr(gate_waveform, sample_rate, vad_result)
 
-    prosody = prosody_engine.analyze(waveform, sample_rate)
+    prosody = prosody_engine.analyze(gate_waveform, sample_rate)
     multiple_voices = prosody_engine.detect_multiple_voices(prosody, config)
 
     import numpy as np

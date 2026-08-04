@@ -20,7 +20,7 @@ LanguageProfileStore in code_switch_multilang.py.
 
 import logging
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, Optional, Set
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

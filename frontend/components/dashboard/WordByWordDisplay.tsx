@@ -3,10 +3,12 @@
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Mirrors backend WordStatus (lib/text_alignment.py) — the authoritative, post-upload
-// per-word classification used by both Pronunciation Coach's attempt result and Accent
-// Assessment's assessment result.
-export type WordDisplayStatus = "correct" | "mispronounced" | "stress_error" | "skipped";
+// "correct"/"mispronounced"/"stress_error"/"skipped" mirror backend WordStatus
+// (lib/text_alignment.py) — the authoritative, post-upload classification used by both
+// Pronunciation Coach's attempt result and Accent Assessment's assessment result.
+// "wrong"/"pending" are live-preview-only (lib/usePronunciationLivePreview.ts's cheap
+// client-side compare while still recording, before the real result lands).
+export type WordDisplayStatus = "correct" | "mispronounced" | "stress_error" | "skipped" | "wrong" | "pending";
 
 export interface WordDisplayItem {
   word: string;
@@ -23,6 +25,11 @@ const STATUS_CLASSES: Record<WordDisplayStatus, string> = {
   // Missed/skipped gets its own color rather than blending into "wrong" — amber is the
   // closest semantic token to "yellow" this theme has (no dedicated yellow exists).
   skipped: "cursor-pointer bg-warning/15 text-warning hover:bg-warning/25",
+  // Live-preview only, softer than the authoritative colors above (/10 not /15) — the
+  // live guess can still change on the next partial, so it should read as a hint, not
+  // a verdict. Same hues, no new colors, just lower intensity while it's still live.
+  wrong: "cursor-default bg-danger/10 text-danger",
+  pending: "cursor-default bg-muted/40 text-muted-foreground",
 };
 
 interface WordByWordDisplayProps {

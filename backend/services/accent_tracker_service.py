@@ -7,7 +7,7 @@ and E-03 (missing sub-metric -> returns None/null cell).
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from fastapi import Depends
 from lib import kv_store

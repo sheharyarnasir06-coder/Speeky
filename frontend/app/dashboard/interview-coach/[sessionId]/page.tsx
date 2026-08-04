@@ -16,12 +16,14 @@ import { Button } from "@/components/ui/button";
 import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
 import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
+import { MilestoneCelebrationModal } from "@/components/dashboard/MilestoneCelebrationModal";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api";
 import { useAutoScroll } from "@/lib/useAutoScroll";
+import { usePracticeTimePing } from "@/lib/usePracticeTimePing";
 import { buildVoiceWsUrl, useVoiceSocket } from "@/lib/useVoiceSocket";
 import {
   endInterviewSession,
@@ -88,6 +90,9 @@ export default function InterviewCoachSessionPage() {
     if (!firstKeystrokeAt.current) firstKeystrokeAt.current = Date.now();
     setAnswer((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
   }, []);
+  // Live-preview text while the user keeps talking — read-only, never touches the
+  // editable answer field. Clears itself once the real transcript lands and appends.
+  const [livePreview, setLivePreview] = React.useState("");
   const {
     isVoiceActive,
     isConnectingVoice,
@@ -96,13 +101,22 @@ export default function InterviewCoachSessionPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useVoiceSocket(getWsUrl, onTranscript);
+  } = useVoiceSocket(getWsUrl, onTranscript, setLivePreview);
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Interview Coach",
   });
   React.useEffect(() => {
     if (voiceError) setError(voiceError);
   }, [voiceError]);
+
+  // PDG-US-15: heartbeat pings while this interview is the active practice
+  // session (not paused, not finished), crediting lifetime practice time and
+  // surfacing any milestone that unlocks mid-session.
+  const { newlyUnlocked, dismissMilestone } = usePracticeTimePing(
+    "interview_coach",
+    sessionId,
+    status === "active" && !feedback,
+  );
 
   // Rehydrate from sessionStorage — the fast path when this tab is the one that
   // started the session. If that's empty (fresh navigation, e.g. the Explore
@@ -289,7 +303,11 @@ export default function InterviewCoachSessionPage() {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       {gate}
-      <div className="flex items-center justify-between">
+      <MilestoneCelebrationModal
+        milestone={newlyUnlocked[0] ?? null}
+        onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-serif text-h2 font-semibold capitalize text-foreground">
           {mode.replace("_", " ")} Interview
         </h1>
@@ -364,7 +382,7 @@ export default function InterviewCoachSessionPage() {
             Session paused — click Resume to continue.
           </p>
         ) : (
-          <div className="flex items-center gap-2 border-t border-border pt-4">
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
             <input
               type="text"
               value={answer}
@@ -381,7 +399,7 @@ export default function InterviewCoachSessionPage() {
                 }
               }}
               placeholder="Type your answer..."
-              className="h-11 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+              className="h-11 min-w-0 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
             />
             <Button
               size="md"
@@ -422,6 +440,11 @@ export default function InterviewCoachSessionPage() {
             className="text-sm text-muted-foreground"
           >
             {voiceStatus}
+          </p>
+        ) : null}
+        {livePreview ? (
+          <p role="status" aria-live="polite" className="text-sm italic text-muted-foreground">
+            {livePreview}
           </p>
         ) : null}
       </div>

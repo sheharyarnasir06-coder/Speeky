@@ -22,7 +22,7 @@ from typing import Awaitable, Callable, List, Optional
 
 import numpy as np
 import torch
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 from silero_vad import VADIterator, load_silero_vad
 
 from lib import audio_io, prosody_engine, stt_engine, vad_engine
@@ -108,6 +108,34 @@ def _transcribe_partial(waveform: np.ndarray) -> dict:
     segments, _info = model.transcribe(waveform, beam_size=1, temperature=0, language="en")
     text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
     return {"text": text}
+
+
+_TRAILING_SILENCE_WINDOW_S = 0.1
+_TRAILING_SILENCE_DBFS = -40.0  # same speech/silence line as SpeechConfig.min_avg_dbfs
+
+
+def _trim_trailing_silence(waveform: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Drop trailing near-silent windows (a mid-passage pause, a breath, background
+    hum) off the end of a growing buffer. A cheap RMS-per-window scan rather than a VAD
+    pass -- this runs on every partial tick (every 1.2s, over a buffer that can grow to
+    180s), so it needs to be fast, not exact."""
+    window = int(_TRAILING_SILENCE_WINDOW_S * sample_rate)
+    if window <= 0 or len(waveform) <= window:
+        return waveform
+    end = len(waveform)
+    while end > window and audio_io.rms_dbfs(waveform[end - window : end]) < _TRAILING_SILENCE_DBFS:
+        end -= window
+    return waveform[:end]
+
+
+def _transcribe_live_preview(waveform: np.ndarray) -> dict:
+    """Same cheap pass as _transcribe_partial, but first drops a trailing near-silent
+    stretch. LivePreviewSession re-transcribes the whole buffer from t=0 on every
+    partial, so the tail is often silence, a breath, or background noise while the
+    reader pauses mid-passage -- feeding Whisper a buffer that ends in near-silence is
+    exactly when it hallucinates a word to fill the gap, which is what surfaces
+    client-side as the live preview marking words ahead of what was actually said."""
+    return _transcribe_partial(_trim_trailing_silence(waveform, SAMPLE_RATE))
 
 
 class VoiceSession:
@@ -246,6 +274,86 @@ class VoiceSession:
         if self._speaking:
             self._speaking = False
             await self._finalize()
+
+
+# Generous cap on how much audio a live-preview session will keep transcribing against —
+# not a product limit (the caller's own upload endpoint enforces the real one via
+# speech_config.max_recording_seconds), just a memory/cost backstop against a forgotten-
+# open recording. Comfortably above any real Pronunciation Coach sentence or Accent
+# Assessment passage read.
+MAX_PREVIEW_SECONDS = 180
+
+
+class LivePreviewSession:
+    """Continuous live-preview transcription with no VAD segmentation — for reading a
+    known target sentence/passage aloud (Pronunciation Coach, Accent Assessment), where
+    natural mid-passage pauses must NOT be treated as end-of-speech the way a
+    push-to-talk VoiceSession's utterance boundaries would. Buffers the whole recording
+    and periodically streams a cheap partial transcript; never sends a "final" — the
+    authoritative, per-word-classified result always comes from the caller's existing
+    MediaRecorder-blob upload endpoint, completely unchanged. The frontend does its own
+    lightweight positional word-compare against text it already has (the target
+    sentence/passage) to decide live colors — this class only supplies growing text."""
+
+    def __init__(self, on_message: Callable[[dict], Awaitable[None]], partial_interval_s: float = 1.2):
+        self._on_message = on_message
+        self._partial_interval_s = partial_interval_s
+        self._buffer: List[np.ndarray] = []
+        self._total_samples = 0
+        self._samples_since_partial = 0
+        self._partial_in_flight = False
+        self._closed = False
+
+    async def push(self, chunk: bytes) -> None:
+        if self._closed or self._total_samples >= MAX_PREVIEW_SECONDS * SAMPLE_RATE:
+            return
+        samples = np.frombuffer(chunk, dtype=np.int16)
+        self._buffer.append(samples)
+        self._total_samples += len(samples)
+        self._samples_since_partial += len(samples)
+
+        if self._partial_in_flight or self._samples_since_partial < self._partial_interval_s * SAMPLE_RATE:
+            return
+        self._samples_since_partial = 0
+        waveform = np.concatenate(self._buffer).astype(np.float32) / 32768.0
+        self._partial_in_flight = True
+        asyncio.create_task(self._run_partial(waveform))
+
+    async def _run_partial(self, waveform: np.ndarray) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            body = await loop.run_in_executor(_executor, _transcribe_live_preview, waveform)
+        except Exception:
+            logger.exception("Live-preview transcription failed")
+            return
+        finally:
+            self._partial_in_flight = False
+        if self._closed or not body["text"]:
+            return
+        try:
+            await self._on_message({"type": "partial", "text": body["text"]})
+        except Exception:
+            logger.warning("Live-preview message send failed", exc_info=True)
+
+    async def close(self) -> None:
+        self._closed = True
+
+
+async def serve_preview(websocket: WebSocket, partial_interval_s: float = 1.2) -> None:
+    """Like serve(), but for a continuous LivePreviewSession — no VAD, no "stop" flush
+    semantics needed, since there's no authoritative transcript on this channel to lose:
+    the real result always comes from the caller's separate upload endpoint."""
+    session = LivePreviewSession(on_message=websocket.send_json, partial_interval_s=partial_interval_s)
+    try:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data is not None:
+                await session.push(data)
+    finally:
+        await session.close()
 
 
 async def serve(websocket: WebSocket, mode: str, partial_interval_s: Optional[float] = None) -> None:

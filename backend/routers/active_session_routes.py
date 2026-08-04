@@ -1,9 +1,18 @@
 from fastapi import APIRouter, Depends
 
 from lib.explore_sessions import find_open_explore_session, supersede_open_explore_sessions
+from lib.recent_activity import get_recent_activity
 from middlewares.auth_middleware import require_auth
 
 router = APIRouter()
+
+
+@router.get("/recent-activity")
+async def api_recent_activity(user_id: str = Depends(require_auth)):
+    """Learner Dashboard's "Recent Activity" feed — last 3 practice sessions across
+    every feature (scenario, conversation, pronunciation, interview coach, accent),
+    most recent first."""
+    return {"activities": await get_recent_activity(user_id, limit=3)}
 
 
 @router.get("/explore")

@@ -8,6 +8,11 @@ from schemas.public_speaking_schemas import (
     PublicSpeakingTurnSchema,
     QAResponseSchema,
 )
+# PSC-US-08 note: get_filler_words_for_session exists in TWO services and they are
+# not interchangeable. This router uses the public_speaking_service one (below),
+# which rebuilds the analysis from the session's stored transcript/audioFeatures and
+# raises SessionNotFoundError. coaching_routes.py deliberately uses the
+# filler_word_service one instead, for its CoachingSession + KV-store fallback.
 from services.public_speaking_service import (
     start_session,
     submit_turn,

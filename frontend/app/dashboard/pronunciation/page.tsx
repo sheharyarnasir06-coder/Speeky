@@ -13,10 +13,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
+import { LiveWordHighlight } from "@/components/dashboard/LiveWordHighlight";
 import { WordByWordDisplay } from "@/components/dashboard/WordByWordDisplay";
 import { ApiError } from "@/lib/api";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { useAudioRecorder } from "@/lib/useAudioRecorder";
+import { usePronunciationLivePreview } from "@/lib/usePronunciationLivePreview";
+import { buildVoiceWsUrl } from "@/lib/useVoiceSocket";
 import { cn } from "@/lib/utils";
 import {
   checkResumableSession,
@@ -71,6 +74,22 @@ export default function PronunciationCoachPage() {
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Pronunciation Coach",
   });
+
+  // Live word-by-word preview while recording — cosmetic only, submitAttempt (via
+  // recorder's own blob upload) below is still what actually scores the attempt.
+  const sessionIdRef = React.useRef<string | null>(null);
+  const getPreviewWsUrl = React.useCallback(() => {
+    if (!sessionIdRef.current) return null;
+    return buildVoiceWsUrl(`/pronunciation-coach/${sessionIdRef.current}/attempt-preview-ws`);
+  }, []);
+  const targetWords = step.name === "practice" ? step.session.sentence.split(/\s+/).filter(Boolean) : [];
+  const livePreview = usePronunciationLivePreview(targetWords, getPreviewWsUrl);
+  React.useEffect(() => {
+    if (step.name === "practice") {
+      sessionIdRef.current = step.session.session_id;
+      livePreview.reset();
+    }
+  }, [step, livePreview.reset]);
 
   // 3-strikes "hear pronunciation": tracks how many consecutive attempts of the
   // current sentence a given word has come back non-correct on. Purely a frontend
@@ -269,9 +288,12 @@ export default function PronunciationCoachPage() {
 
   async function handleAttemptRecordToggle() {
     if (recorder.isRecording) {
+      livePreview.stop();
       const audio = await recorder.stop();
       if (audio) await handleSubmitAttempt(audio);
     } else {
+      livePreview.reset();
+      void livePreview.start(); // fire-and-forget — cosmetic, must never delay/block the real recording
       await recorder.start();
     }
   }
@@ -437,7 +459,11 @@ export default function PronunciationCoachPage() {
             {session.phoneme_tag}
           </span>
           <p className="mt-4 font-serif text-xl font-semibold text-foreground">
-            {session.sentence}
+            {recorder.isRecording ? (
+              <LiveWordHighlight words={targetWords} statuses={livePreview.wordStatuses} />
+            ) : (
+              session.sentence
+            )}
           </p>
 
           {recorder.error ? (

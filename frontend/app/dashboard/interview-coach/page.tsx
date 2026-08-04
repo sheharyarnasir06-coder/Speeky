@@ -135,7 +135,7 @@ export default function InterviewCoachSetupPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-2xl animate-fade-up flex-col gap-6">
       <div>
         <h1 className="font-serif text-h1 font-semibold text-foreground">
           Interview Coach
@@ -243,7 +243,7 @@ export default function InterviewCoachSetupPage() {
                 {panelists.map((p, i) => (
                   <div key={i} className="flex items-start gap-2 rounded-xl border border-border p-3">
                     <Users className="mt-2.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    <div className="grid flex-1 grid-cols-2 gap-2">
+                    <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
                       <Input
                         label="Name"
                         value={p.name}
@@ -273,7 +273,7 @@ export default function InterviewCoachSetupPage() {
           ) : null}
 
           {mode === "case_study" ? (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-sm font-medium text-foreground">Case type</p>
                 <div className="mt-2 flex flex-col gap-1.5">

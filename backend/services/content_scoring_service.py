@@ -13,6 +13,7 @@ doesn't itself call the LLM.
 import logging
 from typing import Dict, List
 
+from lib.scoring import clamp, clean_str_list
 from lib import llm_client, prompts
 
 logger = logging.getLogger(__name__)
@@ -25,13 +26,6 @@ QUALITY_CONFIDENCE_MIN_TO_PASS = 50  # readiness threshold (CM-US-07)
 # quality_acknowledged to publish anyway (the content-safety scan below is separate
 # and is NEVER overridable by that flag).
 QUALITY_PUBLISH_THRESHOLD = 70
-
-
-def _clamp(value, lo=0, hi=100) -> int:
-    try:
-        return max(lo, min(hi, int(round(float(value)))))
-    except (TypeError, ValueError):
-        return lo
 
 
 def offline_evaluate_template(scenario: Dict) -> Dict:
@@ -71,10 +65,10 @@ def offline_evaluate_template(scenario: Dict) -> Dict:
         guardrails.append("Add explicit guidance for off-topic, abusive, or unexpected learner input.")
 
     return {
-        "quality_score": _clamp(quality),
+        "quality_score": clamp(quality),
         "quality_breakdown": {},
         "quality_recommendations": recommendations[:5],
-        "confidence_score": _clamp(confidence),
+        "confidence_score": clamp(confidence),
         "confidence_explanation": "Offline heuristic estimate — connect Groq for a full evaluation.",
         "confidence_warnings": warnings[:5],
         "confidence_guardrail_suggestions": guardrails[:5],
@@ -92,13 +86,13 @@ async def evaluate_template(scenario: Dict) -> Dict:
             [{"role": "user", "content": prompt}], temperature=0.2, max_tokens=700
         )
         return {
-            "quality_score": _clamp(raw.get("quality_score", 0)),
+            "quality_score": clamp(raw.get("quality_score", 0)),
             "quality_breakdown": raw.get("quality_breakdown") or {},
-            "quality_recommendations": [str(r).strip() for r in (raw.get("quality_recommendations") or []) if str(r).strip()][:5],
-            "confidence_score": _clamp(raw.get("confidence_score", 0)),
+            "quality_recommendations": clean_str_list(raw.get("quality_recommendations"), 5),
+            "confidence_score": clamp(raw.get("confidence_score", 0)),
             "confidence_explanation": str(raw.get("confidence_explanation", "")).strip(),
-            "confidence_warnings": [str(w).strip() for w in (raw.get("confidence_warnings") or []) if str(w).strip()][:5],
-            "confidence_guardrail_suggestions": [str(g).strip() for g in (raw.get("confidence_guardrail_suggestions") or []) if str(g).strip()][:5],
+            "confidence_warnings": clean_str_list(raw.get("confidence_warnings"), 5),
+            "confidence_guardrail_suggestions": clean_str_list(raw.get("confidence_guardrail_suggestions"), 5),
             "_source": "llm",
         }
     except (llm_client.LLMError, TypeError, ValueError) as e:

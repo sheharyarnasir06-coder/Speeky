@@ -1,5 +1,5 @@
 import * as React from "react";
-import { pingPracticeTime, type Milestone } from "./practiceTime";
+import { pingPracticeTime, type Milestone, type PracticeSessionType } from "./practiceTime";
 
 const PING_INTERVAL_MS = 60_000;
 
@@ -7,7 +7,11 @@ const PING_INTERVAL_MS = 60_000;
  * lifetime practice time server-side. Ticks immediately on activation too, so a
  * session shorter than one interval still registers as the primary session.
  * Returns any milestone(s) unlocked by the latest ping, for a celebration UI. */
-export function usePracticeTimePing(sessionId: string | null, active: boolean) {
+export function usePracticeTimePing(
+  sessionType: PracticeSessionType,
+  sessionId: string | null,
+  active: boolean,
+) {
   const [newlyUnlocked, setNewlyUnlocked] = React.useState<Milestone[]>([]);
 
   React.useEffect(() => {
@@ -16,7 +20,7 @@ export function usePracticeTimePing(sessionId: string | null, active: boolean) {
 
     let cancelled = false;
     function tick() {
-      pingPracticeTime("scenario", activeSessionId)
+      pingPracticeTime(sessionType, activeSessionId)
         .then((result) => {
           if (!cancelled && result.newly_unlocked.length > 0) {
             setNewlyUnlocked((prev) => [...prev, ...result.newly_unlocked]);
@@ -33,7 +37,7 @@ export function usePracticeTimePing(sessionId: string | null, active: boolean) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionId, active]);
+  }, [sessionType, sessionId, active]);
 
   function dismissMilestone(hours: number) {
     setNewlyUnlocked((prev) => prev.filter((m) => m.hours !== hours));

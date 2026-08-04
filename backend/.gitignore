@@ -3,7 +3,6 @@ __pycache__/
 .venv/
 venv/
 .env
-tests/
 .DS_Store
 speeky_pgdata/
 prisma/generated/
@@ -15,3 +14,4 @@ data/tts/*.onnx
 data/tts/*.onnx.json
 scripts/*
 seed_admin.py
+tests/**

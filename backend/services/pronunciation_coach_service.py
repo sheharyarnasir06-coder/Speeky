@@ -315,12 +315,12 @@ import base64
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
-from fastapi import Depends, File, Form, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi import Depends, File, Form, UploadFile, WebSocket
+from fastapi.responses import Response
 
-from lib import kv_store, recording_engine, text_alignment, tts_client
+from lib import recording_engine, text_alignment, tts_client, voice_ws
 from lib.audio_io import AudioDecodeError
 from lib.prompts import (
     CODE_SWITCH_PARTIAL_OVERLAP_CEILING,
@@ -341,14 +341,14 @@ from lib.prompts import (
 from lib.recording_engine import RejectionReason
 from lib.speech_config import load_speech_config
 from lib.text_alignment import WordStatus
-from middlewares.auth_middleware import require_auth
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from schemas.pronunciation_schemas import (
     DeviceScopedRequest,
     RecordingRejectedSchema,
     StartSessionRequest,
     WordResultSchema,
 )
-from services import accent_calibration_service, liveness_service
+from services import accent_calibration_service
 from utils.feature_errors import (
     InvalidSubmissionError,
     SessionAlreadyEndedError,
@@ -852,6 +852,25 @@ async def start_session(payload: StartSessionRequest, user_id: str = Depends(req
 async def submit_attempt(session_id: str, audio: UploadFile = File(...), user_id: str = Depends(require_auth)):
     audio_bytes = await audio.read()
     return await _submit_attempt(user_id, session_id, audio_bytes)
+
+
+# ── Live word-by-word preview while reading the target sentence aloud ──────────
+# Cosmetic only: streams growing partial text so the frontend can color words in as
+# they're recognized. submit_attempt (above) — unchanged — is still what actually
+# scores the attempt once the real recording is uploaded on Stop.
+async def voice_socket_preview(websocket: WebSocket, session_id: str):
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
+
+    try:
+        await _get_session(session_id, user_id)
+    except SessionNotFoundError:
+        await websocket.close(code=4404, reason="Pronunciation session not found")
+        return
+
+    await websocket.accept()
+    await voice_ws.serve_preview(websocket)
 
 
 async def retry_word(

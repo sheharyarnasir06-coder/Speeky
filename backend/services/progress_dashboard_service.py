@@ -218,9 +218,15 @@ async def _fetch_completed_records_from_db(user_id: str) -> Tuple[List[Dict], in
         logger.warning(f"ScenarioSession query failed: {e}")
 
     # 4. PublicSpeakingSession
+    # Filtered on completedAt (like every other source above), not status=="completed":
+    # a speech long enough to trigger the Q&A follow-up (PSC-US-12) moves to
+    # status="qa_phase" immediately after scoring, without clearing completedAt or the
+    # scorecard — filtering on status alone hid every such session from the dashboard
+    # until the learner went back and answered the follow-up question, even though it
+    # already had real scores.
     try:
         ps_sessions = await db.publicspeakingsession.find_many(
-            where={"userId": user_id, "status": "completed"}
+            where={"userId": user_id, "completedAt": {"not": None}}
         )
         for ps in ps_sessions:
             scorecard = ps.scorecard or {}
@@ -250,6 +256,31 @@ async def _fetch_completed_records_from_db(user_id: str) -> Tuple[List[Dict], in
             })
     except Exception as e:
         logger.warning(f"PublicSpeakingSession query failed: {e}")
+
+    # 5. AccentAssessment — pronunciation clarity only (no confidence/fluency/vocabulary
+    # concept in this module). No outlierFlags column on this model, so a bad score is
+    # dropped and counted but not persisted back onto the row like the sources above.
+    try:
+        accent_assessments = await db.accentassessment.find_many(
+            where={"userId": user_id, "completedAt": {"not": None}}
+        )
+        for a in accent_assessments:
+            p_score, outlier = _validate_score(a.pronunciationScore)
+            if outlier:
+                outliers_count += 1
+
+            dur = (a.completedAt - a.createdAt).total_seconds() if a.createdAt and a.completedAt else 60.0
+            records.append({
+                "source": "accent",
+                "completed_at": a.completedAt,
+                "confidence_score": None,
+                "fluency_score": None,
+                "vocabulary_score": None,
+                "pronunciation_score": p_score,
+                "duration_seconds": max(0.0, dur),
+            })
+    except Exception as e:
+        logger.warning(f"AccentAssessment query failed: {e}")
 
     # Sort records ascending by completed_at
     records.sort(key=lambda r: r["completed_at"])

@@ -56,9 +56,14 @@
     --accent-foreground: 0 0% 100%;
     /* #FFFFFF */
 
-    --success: 142 72% 29%;
+    /* #147B3F — `text-success` on `bg-success/10` measured 4.43:1 at 29%. */
+    --success: 142 72% 28%;
     /* #15803D */
-    --warning: 32 92% 37%;
+    /* #A25907 — the binding constraint is a Badge's own tint, not the page
+       background: `text-warning` on `bg-warning/10` measured 4.07:1 at the
+       original 37%, still 4.41:1 at 34%. 33% clears AA (4.62:1) on the tint and
+       comfortably on plain surfaces. */
+    --warning: 32 92% 33%;
     /* #B45309 */
     --danger: 0 74% 42%;
     /* #BB1F1F — darkened so white text clears AA on the filled danger button. */
@@ -75,11 +80,11 @@
     --shadow-color: 222 47% 11%;
     --elevation-1: 0 1px 2px -1px hsl(var(--shadow-color) / 0.08);
     --elevation-2: 0 2px 4px -2px hsl(var(--shadow-color) / 0.08),
-                   0 4px 12px -4px hsl(var(--shadow-color) / 0.06);
+      0 4px 12px -4px hsl(var(--shadow-color) / 0.06);
     --elevation-3: 0 4px 8px -4px hsl(var(--shadow-color) / 0.10),
-                   0 12px 24px -8px hsl(var(--shadow-color) / 0.08);
+      0 12px 24px -8px hsl(var(--shadow-color) / 0.08);
     --elevation-4: 0 8px 16px -8px hsl(var(--shadow-color) / 0.12),
-                   0 24px 48px -12px hsl(var(--shadow-color) / 0.12);
+      0 24px 48px -12px hsl(var(--shadow-color) / 0.12);
     --elevation-ring: 0 0 0 1px hsl(var(--border) / 0.9);
 
     /* ── Motion ───────────────────────────────────────────────────────────
@@ -148,11 +153,11 @@
     --shadow-color: 222 60% 3%;
     --elevation-1: 0 1px 2px -1px hsl(var(--shadow-color) / 0.5);
     --elevation-2: 0 2px 6px -2px hsl(var(--shadow-color) / 0.55),
-                   0 6px 16px -6px hsl(var(--shadow-color) / 0.45);
+      0 6px 16px -6px hsl(var(--shadow-color) / 0.45);
     --elevation-3: 0 6px 12px -6px hsl(var(--shadow-color) / 0.6),
-                   0 16px 32px -12px hsl(var(--shadow-color) / 0.5);
+      0 16px 32px -12px hsl(var(--shadow-color) / 0.5);
     --elevation-4: 0 10px 20px -10px hsl(var(--shadow-color) / 0.7),
-                   0 32px 64px -16px hsl(var(--shadow-color) / 0.6);
+      0 32px 64px -16px hsl(var(--shadow-color) / 0.6);
     --elevation-ring: 0 0 0 1px hsl(0 0% 100% / 0.06);
   }
 
@@ -184,6 +189,7 @@
      a near-instant state change rather than being removed, so anything that
      depends on an animation/transition end event still fires. */
   @media (prefers-reduced-motion: reduce) {
+
     *,
     *::before,
     *::after {
@@ -250,6 +256,29 @@
   transition: all .25s ease-in-out;
 }
 
+.Toastify__toast.Toastify__toast {
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* 
+  The base stylesheet already docks the container edge-to-edge.
+  This just keeps the toast itself from reading as a full desktop-sized card pinned to a phone screen. */
+@media only screen and (max-width: 480px) {
+  .Toastify__toast {
+    margin-bottom: 0.15rem !important;
+    max-width: calc(100vw - 25%);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .Toastify__toast.Toastify__toast {
+    border-radius: calc(var(--radius) / 2);
+    font-size: 0.83rem;
+  }
+}
+
 .Toastify__toast--success {
   border-color: hsl(var(--success) / 0.22);
   border-left: 3px solid hsl(var(--success));
@@ -288,12 +317,6 @@
     linear-gradient(135deg,
       hsl(var(--info) / 0.12),
       hsl(var(--surface-elevated))) !important;
-}
-
-.Toastify__toast-body {
-  color: hsl(var(--foreground));
-  font-size: 0.875rem;
-  font-weight: 500;
 }
 
 
@@ -393,6 +416,7 @@
 }
 
 @keyframes voice-wave-breathe {
+
   0%,
   100% {
     opacity: 0.42;
@@ -406,6 +430,7 @@
 }
 
 @keyframes voice-status-glow {
+
   0%,
   100% {
     box-shadow: 0 0 0 0 hsl(var(--success) / 0.45);
@@ -417,6 +442,7 @@
 }
 
 @keyframes voice-listening-button-glow {
+
   0%,
   100% {
     box-shadow:
@@ -432,6 +458,7 @@
 }
 
 @keyframes voice-listening-button-ring {
+
   0%,
   100% {
     opacity: 0.18;
@@ -445,6 +472,7 @@
 }
 
 @keyframes voice-listening-button-glow-dark {
+
   0%,
   100% {
     box-shadow:
@@ -460,8 +488,27 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .voice-listening-button,
   .voice-listening-button::after {
     animation: none;
   }
+}
+
+@keyframes flame-flicker {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.1);
+    opacity: 0.82;
+  }
+}
+
+.flame-active {
+  animation: flame-flicker 1.8s ease-in-out infinite;
 }

@@ -15,17 +15,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import Depends, File, Form, UploadFile
+from fastapi import Depends, File, Form, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from prisma import Json
 
-from lib import kv_store, prosody_engine, recording_engine, text_alignment
+from lib import kv_store, prosody_engine, recording_engine, text_alignment, voice_ws
 from lib.audio_io import AudioDecodeError
 from lib.prisma_client import db
-from lib.recording_engine import RecordingAnalysis, RejectionReason
+from lib.recording_engine import RejectionReason
 from lib.speech_config import SpeechConfig, load_speech_config
 from lib.text_alignment import AlignedWord, WordStatus
-from middlewares.auth_middleware import require_auth
+from middlewares.auth_middleware import require_auth, ws_require_auth
 from prisma.enums import AccentAssessmentStatus
 from schemas.accent_schemas import (
     AccentAssessmentResultSchema,
@@ -285,8 +285,12 @@ async def submit_passage_assessment(
     drill_type: Optional[str] = Form(None),
     user_id: str = Depends(require_auth),
 ):
-    # ACC-US-01 E-04: Validate prompt token (reject stale/reused prompt tokens)
-    valid_token = await liveness_service.validate_and_consume_prompt_token(user_id, passage_id, prompt_token)
+    # ACC-US-01 E-04: Validate prompt token (reject stale/reused prompt tokens). Read-only
+    # here — consumed later, only once the attempt is confirmed to proceed past the
+    # content-quality rejection gates below, so a legitimate retry (e.g. a false-positive
+    # "multiple voices" flag) doesn't burn the token and turn the next attempt's real
+    # rejection into a confusing "stale token" error instead.
+    valid_token = await liveness_service.validate_prompt_token(user_id, passage_id, prompt_token)
     if not valid_token:
         return JSONResponse(
             status_code=422,
@@ -371,6 +375,10 @@ async def submit_passage_assessment(
             content={"warning": conflict_msg, "error": conflict_msg},
         )
 
+    # Past every retry-eligible gate — this attempt is going to be scored, so the
+    # single-use token is genuinely spent now.
+    await liveness_service.consume_prompt_token(prompt_token)  # type: ignore[arg-type]
+
     pronunciation_score = _pronunciation_score(aligned_words, analysis.words)
     stress_score = _stress_score(aligned_words, config, analysis.prosody, analysis.words)
     rhythm_score = _rhythm_score(analysis.prosody, config)
@@ -429,4 +437,21 @@ async def submit_passage_assessment(
         warning=warning_notice,
         model_used=model_used,
     )
+
+
+# ── Live word-by-word preview while reading the target passage aloud ───────────
+# Cosmetic only: streams growing partial text so the frontend can color words in as
+# they're recognized. submit_passage_assessment (above) — unchanged — is still what
+# actually scores the assessment once the real recording is uploaded on Stop.
+async def voice_socket_preview(websocket: WebSocket, passage_id: str):
+    user_id = await ws_require_auth(websocket)
+    if user_id is None:
+        return  # ws_require_auth already closed the socket
+
+    if not _passage_bank.get_by_id(passage_id):
+        await websocket.close(code=4404, reason="Unknown passage_id")
+        return
+
+    await websocket.accept()
+    await voice_ws.serve_preview(websocket)
 

@@ -23,11 +23,9 @@ from lib.admin_constants import (
 from lib.role_gate import has_role
 from middlewares.auth_middleware import require_admin
 from schemas.admin_analytics_schemas import (
-    DashboardWidgetConfig,
     SavedViewCreateRequest,
     SavedViewListResponse,
     SavedViewResponse,
-    SavedViewUpdateRequest,
 )
 from utils.app_error import AppError
 

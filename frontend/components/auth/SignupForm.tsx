@@ -398,7 +398,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
         noValidate
         className="flex flex-col gap-5"
       >
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Button
             type="button"
             variant="outline"
@@ -422,7 +422,7 @@ export function SignupForm({ onSubmit }: SignupFormProps) {
           <span className="h-px flex-1 bg-border" />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label="First name"
             autoComplete="given-name"

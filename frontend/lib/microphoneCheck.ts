@@ -82,6 +82,15 @@ export async function requestAndTestMicrophoneInput({
     }
 
     audioContext = new AudioContextClass();
+    // The getUserMedia await above breaks the synchronous user-gesture chain, so on
+    // iOS Safari and most low-end/Android browsers the new AudioContext starts (and
+    // stays) "suspended" — the analyser never sees a live sample, so the loop below
+    // always reads silence no matter how loud the mic input is. Desktop Chrome/Edge
+    // auto-resume regardless, which is why this only ever reproduced on mobile.
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
     const source = audioContext.createMediaStreamSource(stream);
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 2048;

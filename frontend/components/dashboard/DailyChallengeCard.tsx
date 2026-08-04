@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Flame } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError } from "@/lib/api";
 import { localDate, getDailyChallengeStatus, type DailyChallengeStatus } from "@/lib/dailyChallenge";
@@ -59,11 +60,13 @@ export function DailyChallengeCard() {
     <div className="flex animate-fade-up flex-col justify-between gap-6 rounded-2xl bg-gradient-to-br from-accent to-accent/80 p-6 text-accent-foreground shadow-sm transition-transform duration-200 hover:-translate-y-0.5">
       <div>
         <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-accent-foreground/80">
-          <Flame className={done ? "h-4 w-4 fill-current" : "h-4 w-4"} aria-hidden="true" />
+          <Flame className={cn("h-4 w-4", done && "flame-active fill-current")} aria-hidden="true" />
           Daily Streak
         </span>
         <p className="mt-3 flex items-baseline gap-2">
-          <span className="text-5xl font-bold tracking-tight">{status?.current_streak ?? "–"}</span>
+          <span key={status?.current_streak ?? "pending"} className="animate-scale-in text-5xl font-bold tracking-tight">
+            {status?.current_streak ?? "–"}
+          </span>
           <span className="text-lg text-accent-foreground/80">Days</span>
         </p>
       </div>

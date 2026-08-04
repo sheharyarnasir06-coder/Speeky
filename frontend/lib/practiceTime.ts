@@ -22,7 +22,16 @@ export interface TrophyCase {
   progress_to_next: number;
 }
 
-export function pingPracticeTime(sessionType: "scenario", sessionId: string) {
+// Mirrors Backend/schemas/practice_time_schemas.py's ALLOWED_SESSION_TYPES —
+// every practice feature that has an ongoing session worth crediting time for.
+export type PracticeSessionType =
+  | "scenario"
+  | "conversation"
+  | "coaching"
+  | "interview_coach"
+  | "public_speaking";
+
+export function pingPracticeTime(sessionType: PracticeSessionType, sessionId: string) {
   return api<PracticeTimePingResult>("/practice-time/ping", {
     method: "POST",
     body: JSON.stringify({ session_type: sessionType, session_id: sessionId }),

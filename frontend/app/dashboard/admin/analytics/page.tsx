@@ -474,10 +474,18 @@ function MiniFunnel({ funnel }: { funnel: OverviewResult["onboarding_funnel"] })
   return (
     <div className="mt-3 flex flex-col gap-3">
       {funnel.map((step) => (
-        <div key={step.step} className="flex items-center gap-3 text-sm">
-          <span className="w-44 shrink-0 truncate text-foreground">{step.step}</span>
-          <Bar pct={step.pct_of_start} />
-          <span className="w-32 shrink-0 text-right text-muted-foreground">
+        // w-44 + w-32 were both shrink-0, so this row could never compress below
+        // ~330px and pushed the page 171px wide at 375px. The label and the count
+        // now size to content on mobile and only take fixed columns from sm: up,
+        // where there is room for them; the row wraps as a final guard.
+        <div key={step.step} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="min-w-0 flex-1 truncate text-foreground sm:w-44 sm:flex-none sm:shrink-0">
+            {step.step}
+          </span>
+          <span className="order-last w-full sm:order-none sm:w-auto sm:flex-1">
+            <Bar pct={step.pct_of_start} />
+          </span>
+          <span className="shrink-0 text-right text-muted-foreground sm:w-32">
             {step.count} ({step.pct_of_start}%)
           </span>
           {step.drop_off_pct > HIGH_DROP_OFF_THRESHOLD ? (
@@ -781,7 +789,7 @@ function RevenueTab({ days }: { days: number }) {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-surface-elevated">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-surface-elevated">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted-foreground">
             <tr>

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
+import { MilestoneCelebrationModal } from "@/components/dashboard/MilestoneCelebrationModal";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { FillerWordsScorecardSection } from "@/components/dashboard/public-speaking/FillerWordsScorecardSection";
@@ -24,6 +25,7 @@ import {
   type SpeechType,
 } from "@/lib/publicSpeaking";
 import { buildVoiceWsUrl, useVoiceSocket, type VoiceFeatures } from "@/lib/useVoiceSocket";
+import { usePracticeTimePing } from "@/lib/usePracticeTimePing";
 
 const SPEECH_TYPE_CONFIG: Record<string, { label: string; description: string; ideal_wpm: string }> = {
   business_pitch: {
@@ -86,6 +88,31 @@ export default function PublicSpeakingSessionPage() {
     if (!id) return null;
     return buildVoiceWsUrl(`/public-speaking/${id}/voice-ws`);
   }, []);
+
+  // Live text is spliced directly into the (editable) textarea instead of a separate
+  // preview line — but the textarea is editable at any time, so a naive splice risks
+  // clobbering an in-progress edit. committedTextRef is the "locked" baseline (real,
+  // finalized transcript text, or whatever the user typed); splicedPartialRef is the
+  // live guess currently appended after it, or null when no live guess is showing.
+  // Each update only touches the textarea if its current value still exactly matches
+  // what we last spliced — the moment the user types anything, both callbacks back off
+  // and leave their edit alone until the next utterance starts.
+  const committedTextRef = React.useRef("");
+  const splicedPartialRef = React.useRef<string | null>(null);
+
+  const onPartial = React.useCallback((text: string) => {
+    if (!text) return;
+    setTextContent((current) => {
+      const base = committedTextRef.current;
+      const expected =
+        splicedPartialRef.current === null ? base : `${base}${base ? " " : ""}${splicedPartialRef.current}`;
+      if (current !== expected) return current; // user has edited — leave it alone
+      if (splicedPartialRef.current === null) committedTextRef.current = current; // snapshot baseline
+      splicedPartialRef.current = text;
+      return `${committedTextRef.current}${committedTextRef.current ? " " : ""}${text}`;
+    });
+  }, []);
+
   const {
     isVoiceActive,
     isConnectingVoice,
@@ -94,25 +121,54 @@ export default function PublicSpeakingSessionPage() {
     error: voiceError,
     startVoice,
     stopVoice,
-  } = useVoiceSocket(getWsUrl, (text, features?: VoiceFeatures) => {
-    setTextContent((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
-    if (features) {
-      const acc = featuresRef.current;
-      if (features.word_timings) acc.word_timings.push(...features.word_timings);
-      if (typeof features.duration_seconds === "number") acc.duration_seconds += features.duration_seconds;
-      if (typeof features.avg_db === "number") acc.avg_db = features.avg_db;
-      if (typeof features.pitch_range_semitones === "number")
-        acc.pitch_range_semitones = Math.max(acc.pitch_range_semitones, features.pitch_range_semitones);
-      acc.has = true;
-    }
-  });
+  } = useVoiceSocket(
+    getWsUrl,
+    (text, features?: VoiceFeatures) => {
+      setTextContent((prev) => {
+        const base = committedTextRef.current;
+        const expected =
+          splicedPartialRef.current === null ? null : `${base}${base ? " " : ""}${splicedPartialRef.current}`;
+        // Still showing our own live guess untouched? Replace it with the real text
+        // instead of appending on top of the guess. Otherwise (no live guess, or the
+        // user edited) fall back to the original append-to-whatever's-there behavior.
+        const from = expected !== null && prev === expected ? base : prev;
+        const next = from.trim() ? `${from.trim()} ${text}` : text;
+        committedTextRef.current = next; // locked
+        splicedPartialRef.current = null; // ready for the next utterance
+        return next;
+      });
+      if (features) {
+        const acc = featuresRef.current;
+        if (features.word_timings) acc.word_timings.push(...features.word_timings);
+        if (typeof features.duration_seconds === "number") acc.duration_seconds += features.duration_seconds;
+        if (typeof features.avg_db === "number") acc.avg_db = features.avg_db;
+        if (typeof features.pitch_range_semitones === "number")
+          acc.pitch_range_semitones = Math.max(acc.pitch_range_semitones, features.pitch_range_semitones);
+        acc.has = true;
+      }
+    },
+    onPartial,
+  );
   const { gate, runWithVoiceReadiness } = useVoiceReadinessGate({
     featureName: "Public Speaking Practice",
   });
 
+  // PDG-US-15: heartbeat pings while this speech is the active practice
+  // session, crediting lifetime practice time and surfacing any milestone
+  // that unlocks mid-session. "Active" until scored, and — if a follow-up
+  // Q&A got triggered — until that's answered too.
+  const isSessionDone = scorecard !== null && (qaQuestion === null || qaScore !== null);
+  const { newlyUnlocked, dismissMilestone } = usePracticeTimePing(
+    "public_speaking",
+    sessionId,
+    sessionId !== null && !isSessionDone,
+  );
+
   const handleStartVoice = async () => {
     if (isVoiceActive) return;
     voiceStartedAt.current = performance.now();
+    committedTextRef.current = textContent;
+    splicedPartialRef.current = null;
     await startVoice();
   };
 
@@ -203,6 +259,10 @@ export default function PublicSpeakingSessionPage() {
   return (
     <div className="flex flex-col gap-6">
       {gate}
+      <MilestoneCelebrationModal
+        milestone={newlyUnlocked[0] ?? null}
+        onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
+      />
       <div className="flex items-center gap-4">
         <Button
           variant="ghost"
@@ -407,7 +467,7 @@ export default function PublicSpeakingSessionPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <ScoreCard label="Composure" score={qaScore.composure} />
               <ScoreCard label="Relevance" score={qaScore.relevance} />
             </div>

@@ -17,7 +17,7 @@ cross-feature touch is a read-only query of the learner's own sessions.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 
 from fastapi import Depends

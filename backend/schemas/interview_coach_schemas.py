@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from schemas.limits import MAX_SHORT_TEXT_CHARS, MAX_SUBMISSION_CHARS
+from schemas.limits import MAX_SUBMISSION_CHARS
 
 
 class InterviewMode(str, Enum):

@@ -23,7 +23,7 @@ export default function ProfilePage() {
   if (!user) return null;
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex max-w-2xl animate-fade-up flex-col gap-6">
       <h1 className="font-serif text-h1 font-semibold text-foreground">
         Profile
       </h1>

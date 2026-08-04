@@ -208,6 +208,10 @@ model ScenarioSession {
   tips         String[]  @default([]) // 2-3 concrete next-time tips (rich feedback)
   originalLine String? // learner's weakest turn, verbatim — paired with polishedLine below
   polishedLine String? // that turn rewritten stronger ("Post-Session Actionable Script")
+  // CM-US-09 (US-193) "Learner satisfaction" + CM-US-12 (US-196) "User feedback".
+  // 1-5, optional: the learner may always skip rating, so every consumer must treat
+  // null as "no data" rather than as a low score.
+  satisfactionRating Int?
   createdAt    DateTime  @default(now())
   completedAt  DateTime?
 
@@ -346,12 +350,91 @@ model CustomScenario {
   readinessScore     Int?
   readinessChecklist Json? // {ready, checks: {...}, missing: [...]}
 
+  // CM-US-08 (US-192): Vocabulary Coverage Score. Separate from qualityScore —
+  // quality judges the PROMPT, this judges the target-vocab LIST against the
+  // scenario's learning objectives (topic relevance / difficulty distribution /
+  // redundancy / coverage completeness).
+  vocabCoverageScore    Int?
+  vocabCoverageFeedback Json? // {breakdown: {...4 dims}, recommendations: [...], flags: [...]}
+  vocabCoverageAt       DateTime?
+
+  // CM-US-11 (US-195): Prompt Explainability Report. Cached per evaluation so
+  // "View Analysis" is not an LLM call on every open.
+  explainabilityReport Json? // {strengths, weaknesses, ambiguous_wording, missing_constraints, suggested_improvements, deductions, uncertainty}
+  explainabilityAt     DateTime?
+
+  // CM-US-14 (US-198): Deployment Confidence. sandboxRuns/sandboxPasses are the
+  // running tally behind the "sandbox success rate" input — incremented by the
+  // preview tester, never reset by an edit, so history survives content changes.
+  deploymentConfidence Int?
+  deploymentFeedback   Json? // {breakdown: {...6 inputs}, warnings: [...], blocking: [...], recommendation}
+  deploymentScoredAt   DateTime?
+  sandboxRuns          Int   @default(0)
+  sandboxPasses        Int   @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  versions CustomScenarioVersion[]
+  versions      CustomScenarioVersion[]
+  deployments   TemplateDeployment[]
+  perfSnapshots TemplatePerformanceSnapshot[]
+  driftAlerts   ContentDriftAlert[]
 
   @@map("custom_scenarios")
+}
+
+// CM-US-14 (US-198): one row per deployment attempt, so "previous deployment
+// history" is a real input to the next confidence score rather than a guess, and
+// E-03 (prompt regression) can compare against the last DEPLOYED row.
+model TemplateDeployment {
+  id              String         @id @default(cuid())
+  scenarioId      String
+  scenario        CustomScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  version         Int
+  confidenceScore Int
+  breakdown       Json
+  // DEPLOYED = published; BLOCKED = gate refused (E-02 sandbox failure);
+  // ROLLED_BACK = superseded by an admin rollback (E-03/E-04).
+  outcome         String         @default("DEPLOYED")
+  note            String         @default("")
+  createdAt       DateTime       @default(now())
+
+  @@index([scenarioId, createdAt])
+  @@map("template_deployments")
+}
+
+// CM-US-09 (US-193) acceptance: "Historical trends preserved." Live metrics are
+// aggregated on read from scenario_sessions, but that only ever shows *now* —
+// this table keeps the point-in-time series so a trend line survives even after
+// the underlying sessions are pruned.
+model TemplatePerformanceSnapshot {
+  id         String         @id @default(cuid())
+  scenarioId String
+  scenario   CustomScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  metrics    Json // full metric bundle as returned by template_performance_service
+  sampleSize Int
+  capturedAt DateTime       @default(now())
+
+  @@index([scenarioId, capturedAt])
+  @@map("template_performance_snapshots")
+}
+
+// CM-US-12 (US-196): a generated drift alert. Persisted (not computed on the fly)
+// so acknowledgement state survives, and so repeat detection can suppress a
+// duplicate alert for a condition an admin has already seen.
+model ContentDriftAlert {
+  id             String         @id @default(cuid())
+  scenarioId     String
+  scenario       CustomScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  severity       String // INFO | WARNING | CRITICAL
+  summary        String
+  signals        Json // per-signal {baseline, recent, delta, degraded} detail
+  status         String         @default("OPEN") // OPEN | ACKNOWLEDGED
+  detectedAt     DateTime       @default(now())
+  acknowledgedAt DateTime?
+
+  @@index([scenarioId, status])
+  @@map("content_drift_alerts")
 }
 
 // CM-US-04: one snapshot per prior version, written just before every edit/rollback

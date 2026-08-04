@@ -145,6 +145,10 @@ class ScenarioPreviewSchema(BaseModel):
     corporate_tone: bool = True
     turns: List[ScenarioPreviewTurnSchema] = Field(default_factory=list)
     message: Optional[str] = None  # omit to just fetch the opening line
+    # CM-US-14 (US-198): when the sandbox is run against an already-saved scenario,
+    # the run is attributed to it so "sandbox success rate" has real data. Absent
+    # for a brand-new unsaved draft, which has no row to attribute to yet.
+    scenario_id: Optional[str] = None
 
     # CM-US-03: the preview sandbox feeds persona/system_prompt straight to the LLM
     # immediately (no save gate at all), so the safety scan applies here too.

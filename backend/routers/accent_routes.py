@@ -6,6 +6,7 @@ from services.accent_calibration_service import submit_sub_dialect_dispute
 from services.accent_assessment_service import (
     get_target_passage,
     submit_passage_assessment,
+    voice_socket_preview,
 )
 from services.accent_profile_service import get_exercises, get_profile
 from services.accent_tracker_service import get_accent_progress_tracker
@@ -26,6 +27,7 @@ async def handle_sub_dialect_dispute(payload: SubDialectDisputeSchema = SubDiale
 # Accent Assessment -- Rhythm & Stress Patterns (US-93)
 router.add_api_route("/passages", get_target_passage, methods=["GET"])
 router.add_api_route("/passages/{passage_id}/assessments", submit_passage_assessment, methods=["POST"])
+router.add_api_websocket_route("/passages/{passage_id}/preview-ws", voice_socket_preview)
 router.add_api_route("/sub-dialect-dispute", handle_sub_dialect_dispute, methods=["POST"])
 
 # Accent Profile & Improvement (US-89) — the per-dimension SCORE profile

@@ -29,79 +29,18 @@ export const DASHBOARD_NAV_LINKS: DashboardNavLink[] = [
   { label: "Profile", href: "/dashboard/profile", icon: User },
 ];
 
-export interface MasteryMetric {
-  id: string;
+// Learning Mastery card labels — the values/sparkline bars themselves come from
+// the real-time /progress-dashboard/progress data (see app/dashboard/page.tsx).
+export interface MasteryMetricDef {
+  id: "fluency" | "confidence" | "speech";
   label: string;
-  value: number;
-  bars: number[];
-  barClassName: string;
-  valueClassName: string;
-}
-
-export const MASTERY_METRICS: MasteryMetric[] = [
-  {
-    id: "fluency",
-    label: "FLUENCY",
-    value: 85,
-    bars: [35, 50, 65, 85, 100],
-    barClassName: "bg-primary/70 last:bg-primary",
-    valueClassName: "text-primary",
-  },
-  {
-    id: "confidence",
-    label: "CONFIDENCE",
-    value: 72,
-    bars: [25, 40, 55, 70, 90],
-    barClassName: "bg-accent/60 last:bg-accent",
-    valueClassName: "text-accent",
-  },
-  {
-    id: "speech",
-    label: "SPEECH",
-    value: 92,
-    bars: [45, 60, 100, 80, 95],
-    barClassName: "bg-foreground/60 last:bg-foreground",
-    valueClassName: "text-foreground",
-  },
-];
-
-export interface RecentScenario {
-  id: string;
-  category: "Business" | "Social" | "Travel";
-  title: string;
   description: string;
-  meta: string;
-  metaIcon: "users" | "check";
-  progress?: number;
 }
 
-export const RECENT_SCENARIOS: RecentScenario[] = [
-  {
-    id: "q3-budget-presentation",
-    category: "Business",
-    title: "Q3 Budget Presentation",
-    description:
-      "Practice articulating financial projections and handling tough questions.",
-    meta: "8 colleagues joined",
-    metaIcon: "users",
-  },
-  {
-    id: "ordering-at-a-cafe",
-    category: "Social",
-    title: "Ordering at a Café",
-    description: "Master casual interactions, dietary requests, and small talk.",
-    meta: "Completed Mastery",
-    metaIcon: "check",
-  },
-  {
-    id: "flight-connection-issues",
-    category: "Travel",
-    title: "Flight Connection Issues",
-    description: "Learn to negotiate and solve travel problems under pressure.",
-    meta: "70% Progress",
-    metaIcon: "users",
-    progress: 70,
-  },
+export const MASTERY_METRIC_DEFS: MasteryMetricDef[] = [
+  { id: "fluency", label: "FLUENCY", description: "How smoothly you speak without long pauses or hesitation." },
+  { id: "confidence", label: "CONFIDENCE", description: "How assured you sound across your practice sessions." },
+  { id: "speech", label: "SPEECH", description: "How clear and accurate your pronunciation is." },
 ];
 
 // ── Explore / "Choose Your Mission" catalog ─────────────────────────────────

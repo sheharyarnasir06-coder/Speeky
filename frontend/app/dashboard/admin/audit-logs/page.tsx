@@ -292,7 +292,7 @@ export default function AuditLogsPage() {
           title={`Scope Details — ${selectedEntry.action_type} (${selectedEntry.module})`}
         >
           <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
               <div>
                 <span className="text-muted-foreground">Entry ID:</span>{" "}
                 <span className="font-mono font-medium text-foreground">{selectedEntry.id}</span>

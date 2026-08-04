@@ -39,7 +39,7 @@ real audio-backed assessment type exists.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 from fastapi import Depends
 from fastapi.responses import JSONResponse

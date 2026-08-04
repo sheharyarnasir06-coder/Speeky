@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 
-ALLOWED_SESSION_TYPES = ("scenario",)
+ALLOWED_SESSION_TYPES = ("scenario", "conversation", "coaching", "interview_coach", "public_speaking")
 
 
 class PracticeTimePingSchema(BaseModel):

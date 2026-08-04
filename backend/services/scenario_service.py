@@ -21,7 +21,6 @@ aggression phrase bank reused here.
 """
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -38,7 +37,7 @@ from schemas.scenario_schemas import (
     ScenarioTurnSchema,
     StartScenarioSchema,
 )
-from services import content_scoring_service
+from services import content_scoring_service, deployment_confidence_service
 from services.category_service import valid_category_names
 from services.coaching_service import _AGGRESSIVE, _find_phrases
 
@@ -535,6 +534,35 @@ async def end_session(session_id: str, user_id: str = Depends(require_auth)):
     )
 
 
+async def get_recent_sessions(user_id: str = Depends(require_auth)):
+    """Recent scenario session history (started or completed), most recent first —
+    powers the Learner Dashboard's "Recent Scenarios" cards with real data instead
+    of a static mock list. Reads the scenarioMeta snapshot taken at start_session so
+    the label/category shown matches what the learner actually saw, even if an admin
+    has since edited (or archived) the underlying scenario."""
+    rows = await db.scenariosession.find_many(
+        where={"userId": user_id}, order={"createdAt": "desc"}, take=6
+    )
+    items = []
+    for row in rows:
+        meta = row.scenarioMeta or await scenario_meta(row.scenarioKey)
+        meta = meta or {}
+        items.append({
+            "session_id": row.id,
+            "scenario_key": row.scenarioKey,
+            "title": meta.get("label", row.scenarioKey),
+            "category": meta.get("category", "General"),
+            "description": meta.get("intent", ""),
+            "status": row.status,
+            "met_goal": row.metGoal,
+            "confidence_score": row.confidenceScore,
+            "vocabulary_score": row.vocabularyScore,
+            "started_at": row.createdAt.isoformat(),
+            "completed_at": row.completedAt.isoformat() if row.completedAt else None,
+        })
+    return {"scenarios": items}
+
+
 async def get_session(session_id: str, user_id: str = Depends(require_auth)):
     session = await db.scenariosession.find_unique(where={"id": session_id})
     if not session or session.userId != user_id:
@@ -586,6 +614,19 @@ def _serialize_custom(row) -> Dict:
         "scored_at": row.scoredAt.isoformat() if row.scoredAt else None,
         "readiness_score": row.readinessScore,
         "readiness_checklist": row.readinessChecklist,
+        # Sprint 3 content intelligence (US-192 / US-195 / US-198). Exposed on the
+        # existing payload so the admin list can show badges without an extra
+        # request per template.
+        "vocab_coverage_score": row.vocabCoverageScore,
+        "vocab_coverage_feedback": row.vocabCoverageFeedback,
+        "vocab_coverage_at": row.vocabCoverageAt.isoformat() if row.vocabCoverageAt else None,
+        "explainability_report": row.explainabilityReport,
+        "explainability_at": row.explainabilityAt.isoformat() if row.explainabilityAt else None,
+        "deployment_confidence": row.deploymentConfidence,
+        "deployment_feedback": row.deploymentFeedback,
+        "deployment_scored_at": row.deploymentScoredAt.isoformat() if row.deploymentScoredAt else None,
+        "sandbox_runs": row.sandboxRuns,
+        "sandbox_passes": row.sandboxPasses,
         "created_at": row.createdAt.isoformat(),
         "updated_at": row.updatedAt.isoformat(),
     }
@@ -611,11 +652,25 @@ async def _save_version_snapshot(scenario_id: str, version: int, row) -> None:
 
 
 async def _validate_category(category: str) -> Optional[JSONResponse]:
+    # CM-US-10 E-03 (US-194): an UNASSIGNED category is a distinct case from an
+    # unrecognised one and the spec fixes the wording for it — telling an admin
+    # who picked nothing that "" is not a recognized category is nonsense.
+    if not (category or "").strip():
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "Please assign this scenario to a Category so users can find it.",
+                "field": "category",
+            },
+        )
     valid = await valid_category_names()
     if category not in valid:
         return JSONResponse(
             status_code=400,
-            content={"error": f'"{category}" is not a recognized category — add it under Content Management first.'},
+            content={
+                "error": f'"{category}" is not a recognized category — add it under Content Management first.',
+                "field": "category",
+            },
         )
     return None
 
@@ -630,6 +685,12 @@ async def _validate_category(category: str) -> Optional[JSONResponse]:
 # ARCHIVE_PURGE_GRACE_HOURS gives a mis-click undo window via Restore before a purge
 # is possible at all.
 ARCHIVE_PURGE_GRACE_HOURS = 12
+
+# CM-US-10 E-04: retries for the optimistic-concurrency guard on admin_update_custom.
+# Three is ample — each retry only loses to another admin saving in the same
+# millisecond, and an internal admin tool never has enough concurrent editors to
+# starve a writer past that.
+_MAX_WRITE_ATTEMPTS = 3
 
 
 async def _purge_idle_archives() -> int:
@@ -665,7 +726,37 @@ async def admin_list_custom(user_id: str = Depends(require_admin)):
 #      checklist isn't fully green. The CM-US-03 content-safety scan is a schema-level
 #      validator (scenario_schemas.py), not part of this gate, and is never bypassable
 #      by this flag either.
-async def _run_publish_gate(payload: CustomScenarioSchema) -> Tuple[Optional[JSONResponse], Dict]:
+async def _deployment_gate(payload: CustomScenarioSchema, eval_result: Dict,
+                           scenario_id: Optional[str]) -> Tuple[int, Dict]:
+    """CM-US-14 (US-198) pre-deployment evaluation, folded into the existing
+    publish gate rather than bolted on as a second gate the admin has to pass
+    separately. Returns (score, breakdown).
+
+    Vocabulary coverage is read from the stored row when there is one; a brand-new
+    scenario has not been coverage-scored yet, so compute_breakdown's neutral
+    default applies instead of penalising it for a score it never had a chance
+    to earn."""
+    previous, vocab_coverage = [], None
+    if scenario_id:
+        previous = await db.templatedeployment.find_many(
+            where={"scenarioId": scenario_id}, order={"createdAt": "desc"}, take=20
+        )
+        existing = await db.customscenario.find_unique(where={"id": scenario_id})
+        if existing:
+            vocab_coverage = existing.vocabCoverageScore
+
+    runs, passes = (1, 1) if payload.tested else (0, 0)
+    breakdown = deployment_confidence_service.compute_breakdown(
+        eval_result.get("quality_breakdown") or {},
+        eval_result.get("confidence_score"),
+        vocab_coverage,
+        runs, passes, previous,
+    )
+    return deployment_confidence_service.score_from_breakdown(breakdown), breakdown
+
+
+async def _run_publish_gate(payload: CustomScenarioSchema,
+                            scenario_id: Optional[str] = None) -> Tuple[Optional[JSONResponse], Dict]:
     shaped = {
         "title": payload.title, "category": payload.category, "persona": payload.persona,
         "intent": payload.intent, "system_prompt": payload.system_prompt,
@@ -706,21 +797,50 @@ async def _run_publish_gate(payload: CustomScenarioSchema) -> Tuple[Optional[JSO
         "readinessChecklist": Json(readiness),
     }
 
+    deployment_score, deployment_breakdown = await _deployment_gate(payload, eval_result, scenario_id)
+    # CM-US-14 acceptance: "Templates with low deployment confidence require
+    # administrator review before publication." Routed through the SAME
+    # acknowledgement flag as the quality gate rather than a second, separate
+    # confirmation — one deliberate override, not two.
+    low_deployment_confidence = deployment_score < deployment_confidence_service.LOW_CONFIDENCE_THRESHOLD
+
+    scores["deploymentConfidence"] = deployment_score
+    scores["deploymentFeedback"] = Json({
+        "breakdown": deployment_breakdown,
+        "blocking": [],
+        "warnings": [],
+        "recommendation": (
+            "Requires administrator review before publication."
+            if low_deployment_confidence else "Cleared for deployment."
+        ),
+    })
+    scores["deploymentScoredAt"] = datetime.now(timezone.utc)
+
     needs_ack = (
         eval_result["quality_score"] < content_scoring_service.QUALITY_PUBLISH_THRESHOLD
         or not readiness["ready"]
+        or low_deployment_confidence
     )
     if needs_ack and not payload.quality_acknowledged:
+        reasons = []
+        if eval_result["quality_score"] < content_scoring_service.QUALITY_PUBLISH_THRESHOLD:
+            reasons.append(f"quality scored {eval_result['quality_score']}/100")
+        if not readiness["ready"]:
+            reasons.append("the readiness checklist isn't complete")
+        if low_deployment_confidence:
+            reasons.append(f"deployment confidence is {deployment_score}/100")
         return JSONResponse(
             status_code=400,
             content={
                 "error": (
-                    f"Scored {eval_result['quality_score']}/100 on quality and isn't ready to "
-                    "publish yet. Review the feedback, then publish anyway if you're sure."
+                    "Not ready to publish — " + "; ".join(reasons)
+                    + ". Review the feedback, then publish anyway if you're sure."
                 ),
                 "gate": "needs_acknowledgment",
                 "quality_score": eval_result["quality_score"],
                 "confidence_score": eval_result["confidence_score"],
+                "deployment_confidence": deployment_score,
+                "deployment_breakdown": deployment_breakdown,
                 "quality_recommendations": eval_result["quality_recommendations"],
                 "confidence_warnings": eval_result["confidence_warnings"],
                 "guardrail_suggestions": eval_result["confidence_guardrail_suggestions"],
@@ -729,6 +849,14 @@ async def _run_publish_gate(payload: CustomScenarioSchema) -> Tuple[Optional[JSO
         ), {}
 
     return None, scores
+
+
+def deployment_breakdown_of(scores: Dict) -> Dict:
+    """Pull the breakdown back out of the Json-wrapped feedback the gate built, so
+    the deployment record stores the same numbers the scenario row does."""
+    feedback = scores.get("deploymentFeedback")
+    raw = getattr(feedback, "data", feedback) or {}
+    return raw.get("breakdown", {}) if isinstance(raw, dict) else {}
 
 
 async def admin_create_custom(payload: CustomScenarioSchema, user_id: str = Depends(require_admin)):
@@ -760,6 +888,13 @@ async def admin_create_custom(payload: CustomScenarioSchema, user_id: str = Depe
             **scores,
         }
     )
+    # CM-US-14: history is the input to the NEXT confidence score and the record
+    # E-03 compares against to spot a regression, so every publish is logged.
+    await deployment_confidence_service.record_deployment(
+        row.id, row.version, scores.get("deploymentConfidence") or 0,
+        deployment_breakdown_of(scores),
+        outcome="DEPLOYED", note="Created",
+    )
     return _serialize_custom(row)
 
 
@@ -774,32 +909,61 @@ async def admin_update_custom(scenario_id: str, payload: CustomScenarioSchema, u
     if invalid_category:
         return invalid_category
 
-    gate_error, scores = await _run_publish_gate(payload)
+    gate_error, scores = await _run_publish_gate(payload, scenario_id=scenario_id)
     if gate_error:
         return gate_error
 
-    # CM-US-04: snapshot the pre-edit state before applying changes, so this
-    # version is always something "Rollback" can restore.
-    await _save_version_snapshot(scenario_id, row.version, row)
+    fields = {
+        "title": payload.title,
+        "category": payload.category,
+        "persona": payload.persona,
+        "intent": payload.intent,
+        "systemPrompt": payload.system_prompt,
+        "openingLine": payload.opening_line,
+        "targetVocab": payload.target_vocab,
+        "goalType": payload.goal_type,
+        "difficulty": payload.difficulty,
+        "safetyMode": payload.safety_mode,
+        "corporateTone": payload.corporate_tone,
+        "sandboxTested": payload.tested,
+    }
 
-    updated = await db.customscenario.update(
-        where={"id": scenario_id},
-        data={
-            "title": payload.title,
-            "category": payload.category,
-            "persona": payload.persona,
-            "intent": payload.intent,
-            "systemPrompt": payload.system_prompt,
-            "openingLine": payload.opening_line,
-            "targetVocab": payload.target_vocab,
-            "goalType": payload.goal_type,
-            "difficulty": payload.difficulty,
-            "safetyMode": payload.safety_mode,
-            "corporateTone": payload.corporate_tone,
-            "sandboxTested": payload.tested,
-            "version": row.version + 1,
-            **scores,
-        },
+    # CM-US-10 E-04 (US-194): concurrent editing is last-write-wins, but the spec
+    # also requires that "the system stores version histories so the overwritten
+    # data can be restored". A read-then-write did NOT deliver that: two admins
+    # saving at once both read version N, both snapshotted the same N, and both
+    # wrote N+1 — so one admin's work vanished with no snapshot of it, and the
+    # version counter silently lost an increment.
+    #
+    # The write is now guarded on the version we actually read (optimistic
+    # concurrency). A racing writer invalidates the guard, we re-read, and we
+    # snapshot the state we genuinely replaced. Last write still wins; nothing is
+    # lost from history.
+    updated = None
+    for _ in range(_MAX_WRITE_ATTEMPTS):
+        current = await db.customscenario.find_unique(where={"id": scenario_id})
+        if not current:
+            return JSONResponse(status_code=404, content={"error": "Custom scenario not found"})
+
+        applied = await db.customscenario.update_many(
+            where={"id": scenario_id, "version": current.version},
+            data={**fields, "version": current.version + 1, **scores},
+        )
+        if applied:
+            # Snapshot AFTER winning the race, using the row this write replaced.
+            await _save_version_snapshot(scenario_id, current.version, current)
+            updated = await db.customscenario.find_unique(where={"id": scenario_id})
+            break
+
+    if updated is None:
+        return JSONResponse(
+            status_code=409,
+            content={"error": "This scenario is being edited by someone else — reload and try again."},
+        )
+
+    await deployment_confidence_service.record_deployment(
+        updated.id, updated.version, scores.get("deploymentConfidence") or 0,
+        deployment_breakdown_of(scores), outcome="DEPLOYED", note="Updated",
     )
     return _serialize_custom(updated)
 
@@ -975,4 +1139,21 @@ async def admin_preview_custom(payload: ScenarioPreviewSchema, user_id: str = De
     turns.append({"role": "user", "content": payload.message})
     classification = _classify_turn(meta, payload.message)
     reply = await _roleplay_reply(meta, turns, classification)
+
+    # CM-US-14 (US-198): tally the run against the saved scenario so deployment
+    # confidence has a real sandbox success rate.
+    #
+    # A run PASSES when the tester produced a reply with the persona intact.
+    # Deliberately NOT `classification == "ok"`: _classify_turn describes the
+    # LEARNER's message (silence / rambling / aggressive), not the prompt's
+    # behaviour, so treating those as failures would score the template down for
+    # how the tester happened to type. The one classification that does reflect
+    # the scenario itself is an emergency safety break, where the AI must abandon
+    # the persona — that is a genuine reliability event.
+    if payload.scenario_id:
+        await deployment_confidence_service.record_sandbox_run(
+            payload.scenario_id,
+            passed=bool(reply) and classification != "emergency",
+        )
+
     return {"reply": reply, "classification": classification}

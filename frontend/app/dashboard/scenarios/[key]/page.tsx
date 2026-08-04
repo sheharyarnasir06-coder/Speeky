@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { SessionRating } from "@/components/dashboard/SessionRating";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
@@ -78,6 +79,7 @@ export default function ScenarioSessionPage() {
   // that unlocks mid-session.
   const isActivePractice = step.name === "chat";
   const { newlyUnlocked, dismissMilestone } = usePracticeTimePing(
+    "scenario",
     step.name === "chat" ? step.session.session_id : null,
     isActivePractice,
   );
@@ -370,7 +372,7 @@ export default function ScenarioSessionPage() {
           milestone={newlyUnlocked[0] ?? null}
           onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
         />
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="font-serif text-h2 font-semibold text-foreground">
             {step.session.label}
           </h1>
@@ -446,7 +448,7 @@ export default function ScenarioSessionPage() {
             ))}
           </div>
 
-          <div className="flex items-center gap-2 border-t border-border pt-4">
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
             <input
               type="text"
               value={chatInput}
@@ -458,7 +460,7 @@ export default function ScenarioSessionPage() {
                 }
               }}
               placeholder="Type your response..."
-              className="h-11 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+              className="h-11 min-w-0 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
             />
             <Button
               size="md"
@@ -521,6 +523,9 @@ export default function ScenarioSessionPage() {
           {result.summary}
         </p>
       </div>
+
+      {/* US-193 "Learner satisfaction" / US-196 "user feedback" input. */}
+      <SessionRating sessionId={result.session_id} />
 
       <div
         className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm"

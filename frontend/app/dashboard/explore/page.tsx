@@ -166,11 +166,17 @@ export default function ExplorePage() {
                   "group flex h-full flex-col justify-between rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
                   itemUnlocked &&
                     "cursor-pointer hover:-translate-y-1 hover:shadow-md",
-                  !itemUnlocked && "opacity-60",
+                  // Locked state is conveyed by the dashed border and the
+                  // "Locked" copy below — NOT by dimming the card, which dragged
+                  // body text to 2.83:1 in dark mode (WCAG AA needs 4.5:1).
+                  !itemUnlocked && "border-dashed bg-surface",
                 )}
               >
                 <div>
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary text-primary transition-transform duration-300 group-hover:scale-110">
+                  <span className={cn(
+                    "flex h-11 w-11 items-center justify-center rounded-xl bg-secondary text-primary transition-transform duration-300 group-hover:scale-110",
+                    !itemUnlocked && "opacity-70",
+                  )}>
                     <Icon className="h-5 w-5" aria-hidden="true" />
                   </span>
                   <h3 className="mt-4 font-serif text-lg font-semibold text-foreground">
@@ -259,7 +265,8 @@ export default function ExplorePage() {
                 "group flex h-full flex-col justify-between rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
                 clickable &&
                   "cursor-pointer hover:-translate-y-1 hover:shadow-md",
-                locked && "opacity-60",
+                // See the note on the card above: container opacity fails AA.
+                locked && "border-dashed bg-surface",
               )}
             >
               <div>

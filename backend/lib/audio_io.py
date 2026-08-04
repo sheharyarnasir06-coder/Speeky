@@ -77,6 +77,27 @@ def decode_audio_bytes(data: bytes, target_sample_rate: int) -> DecodedAudio:
     return DecodedAudio(waveform=waveform, sample_rate=target_sample_rate)
 
 
+# HVAC/desk rumble sits almost entirely below 40Hz. Deliberately well under any
+# adult voice fundamental (lowest ~85Hz) -- because this only needs to
+# feed the noise-floor/SNR gate (recording_engine.analyze_recording), never
+# prosody_engine's pitch tracking: a cutoff that close to the pitch floor risks
+# attenuating F0 itself on lower voices, which is what silently corrupted the
+# multi-voice heuristic (pitch-jump-based) into false-positive territory the last time
+# this was tried at 80Hz.
+_RUMBLE_CUTOFF_HZ = 40.0
+
+
+def remove_low_frequency_rumble(waveform: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Callers that need a denoised copy for a level/SNR measurement should filter their
+    own copy via this rather than have decode_audio_bytes filter for everyone -- see
+    _RUMBLE_CUTOFF_HZ."""
+    import torch
+    import torchaudio.functional as taf
+
+    filtered = taf.highpass_biquad(torch.from_numpy(waveform).unsqueeze(0), sample_rate, _RUMBLE_CUTOFF_HZ)
+    return filtered.squeeze(0).numpy().astype(np.float32)
+
+
 def rms_dbfs(waveform: np.ndarray) -> float:
     """Root-mean-square level of a float32 [-1, 1] waveform, in dBFS. Silence -> -inf,
     clamped to -120.0 so callers can compare it against a threshold without special-casing."""

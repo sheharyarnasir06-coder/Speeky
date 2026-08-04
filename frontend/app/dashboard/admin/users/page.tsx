@@ -20,6 +20,8 @@ const ROLE_FILTERS = [
   { value: "SUPER_ADMIN", label: "Super Admin" },
 ];
 
+// "brand" is the Badge tone for the primary brand colour — an earlier revision of
+// this file called it "primary", which is not a tone the component accepts.
 const ROLE_TONE: Record<string, "brand" | "neutral" | "warning"> = {
   SUPER_ADMIN: "warning",
   ADMIN: "brand",
@@ -146,7 +148,7 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-border bg-surface-elevated">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-surface-elevated">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted-foreground">
             <tr>

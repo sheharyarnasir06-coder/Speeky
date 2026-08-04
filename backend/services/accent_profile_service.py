@@ -10,7 +10,7 @@ profile can't exist without a completed assessment behind it.
 
 import logging
 import random
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from fastapi import Depends
 from prisma import Json
