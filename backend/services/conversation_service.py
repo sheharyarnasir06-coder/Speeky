@@ -426,7 +426,7 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
 
     # US-152: Silently detect code-switched words and log to the personal word list.
     # Runs after the reply is already saved — never blocks the user-facing response.
-    if not session_ended and llm_client.is_configured():
+    if not session_ended:
         try:
             detector = TextCodeSwitchDetector()
             detection = await detector.detect(text)
