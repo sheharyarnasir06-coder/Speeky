@@ -41,11 +41,11 @@ export function LegalDocument({
         <div className="container flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center" aria-label="Speeky home">
             <Image
-              src="/logo-full.png"
+              src="/speeky-consolidated-logo.png"
               alt="Speeky"
-              width={142}
-              height={159}
-              className="h-9 w-auto"
+              width={277}
+              height={100}
+              className="speeky-logo-heartbeat h-11 w-auto dark:brightness-0 dark:invert"
             />
           </Link>
           <Link

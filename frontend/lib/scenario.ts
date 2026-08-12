@@ -32,6 +32,9 @@ export interface ScenarioTurnResult {
 export interface ScenarioEndResult {
   session_id: string;
   status: string;
+  /** "scored" | "unavailable". politeness and confidence are both null when unavailable:
+   *  the offline grader used to return a politeness base of 78 and met_goal = true. */
+  scoring_status: "scored" | "unavailable";
   scores: {
     politeness: number | null;
     vocabulary: number | null;
@@ -128,6 +131,9 @@ export async function getScenarioSession(sessionId: string): Promise<ScenarioEnd
   return {
     session_id: session.session_id,
     status: session.status,
+    // The stored row carries scores but not the status flag, so derive it: a persisted
+    // session with no confidence score is one that was never graded.
+    scoring_status: session.scores.confidence === null ? "unavailable" : "scored",
     scores: session.scores,
     vocab_used: session.vocab_used,
     vocab_missing: session.target_vocab.filter((w) => !session.vocab_used.includes(w)),

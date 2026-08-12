@@ -21,3 +21,10 @@ MAX_SUBMISSION_CHARS = 8_000
 
 # Short single-line fields (subject lines, topics, context hints).
 MAX_SHORT_TEXT_CHARS = 300
+
+# Per-channel cap on the video_features timeline (see schemas/video_features_schema.py).
+# Not an LLM-token limit — the timeline never reaches the provider — but the same
+# reject-at-the-boundary reasoning applies: the client picks the bin size, so without a cap a
+# single session could POST an unbounded array straight into a JSONB column. 1800 bins is
+# 30 minutes at 1s or an hour at 2s, past which the client downsamples instead.
+MAX_VIDEO_TIMELINE_BINS = 1_800

@@ -10,7 +10,6 @@ import {
   Mic,
   Minus,
   Plane,
-  Plus,
   Sparkles,
   Target,
   TrendingDown,
@@ -47,13 +46,13 @@ const CATEGORY_STYLES: Record<string, CategoryStyle> = {
   },
   Social: {
     icon: Coffee,
-    badge: "bg-accent text-accent-foreground",
-    gradient: "bg-gradient-to-br from-accent to-accent/70",
+    badge: "bg-primary text-primary-foreground",
+    gradient: "bg-[radial-gradient(circle_at_85%_18%,hsl(var(--accent)/0.32),transparent_30%),linear-gradient(135deg,hsl(var(--primary)/0.84),hsl(var(--primary)/0.58))]",
   },
   "Daily Life": {
     icon: Users,
-    badge: "bg-accent text-accent-foreground",
-    gradient: "bg-gradient-to-br from-accent to-accent/70",
+    badge: "bg-primary text-primary-foreground",
+    gradient: "bg-[radial-gradient(circle_at_85%_18%,hsl(var(--accent)/0.32),transparent_30%),linear-gradient(135deg,hsl(var(--primary)/0.84),hsl(var(--primary)/0.58))]",
   },
   Travel: {
     icon: Plane,
@@ -79,8 +78,8 @@ function getCategoryStyle(category: string): CategoryStyle {
 const ACTIVITY_TYPE_STYLES: Record<Exclude<ActivityType, "scenario">, CategoryStyle> = {
   conversation: {
     icon: MessageCircle,
-    badge: "bg-accent text-accent-foreground",
-    gradient: "bg-gradient-to-br from-accent to-accent/70",
+    badge: "bg-primary text-primary-foreground",
+    gradient: "bg-[radial-gradient(circle_at_88%_18%,hsl(var(--accent)/0.30),transparent_30%),radial-gradient(circle_at_10%_105%,hsl(var(--danger)/0.16),transparent_34%),linear-gradient(135deg,hsl(var(--primary)/0.86),hsl(var(--primary)/0.60))]",
   },
   pronunciation: {
     icon: Mic,
@@ -114,12 +113,12 @@ const MASTERY_METRIC_STYLES: Record<
     valueClassName: "text-primary",
   },
   confidence: {
-    barClassName: "bg-accent/60 last:bg-accent",
-    valueClassName: "text-accent",
+    barClassName: "bg-primary/45 last:bg-primary/70",
+    valueClassName: "text-primary",
   },
   speech: {
-    barClassName: "bg-foreground/60 last:bg-foreground",
-    valueClassName: "text-foreground",
+    barClassName: "bg-primary/30 last:bg-primary/80",
+    valueClassName: "text-primary",
   },
 };
 
@@ -209,24 +208,24 @@ export default function DashboardPage() {
           </h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">{subtitle}</p>
         </div>
-        <Button type="button" size="md">
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Start New Session
-        </Button>
       </div>
 
       <DailyChallengeCard />
 
       <div className="grid grid-cols-1 gap-6">
         <div
-          className="animate-fade-up rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-shadow duration-200 hover:shadow-md"
+          className="relative animate-fade-up overflow-hidden rounded-2xl border border-border bg-[radial-gradient(circle_at_100%_0%,hsl(var(--primary)/0.10),transparent_28%),radial-gradient(circle_at_0%_100%,hsl(var(--accent)/0.08),transparent_30%),hsl(var(--surface-elevated))] p-6 shadow-sm transition-shadow duration-200 hover:shadow-md"
           style={{ animationDelay: "150ms" }}
         >
+          <div
+            aria-hidden="true"
+            className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-accent via-primary to-danger"
+          />
           <div className="flex items-center justify-between">
             <h2 className="font-serif text-xl font-semibold text-foreground">
               Learning Mastery
             </h2>
-            <span className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
+            <span className="rounded-full border border-primary/15 bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
               This Week
             </span>
           </div>
@@ -401,14 +400,6 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
-
-      <button
-        type="button"
-        aria-label="Start voice session"
-        className="fixed bottom-8 right-8 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-all duration-200 hover:scale-110 hover:bg-primary-hover hover:shadow-lg active:scale-95"
-      >
-        <Mic className="h-5 w-5" aria-hidden="true" />
-      </button>
     </div>
   );
 }

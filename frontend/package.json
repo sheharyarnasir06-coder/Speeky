@@ -6,11 +6,17 @@
     "dev-all": "npm run dev -- --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start -H 0.0.0.0",
-    "lint": "next lint"
+    "lint": "next lint",
+    "fetch:mediapipe": "node scripts/fetch-mediapipe-assets.mjs",
+    "test:unit": "tsc -p tsconfig.test.json && node --test \"test-build/**/*.test.js\""
   },
   "dependencies": {
+    "@livekit/components-react": "^2.9.23",
+    "@livekit/components-styles": "^1.1.6",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@tailwindcss/postcss": "^4.3.3",
     "clsx": "^2.1.0",
+    "livekit-client": "^2.21.0",
     "lucide-react": "^0.383.0",
     "next": "^14.2.0",
     "react": "^18.3.0",

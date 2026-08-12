@@ -28,7 +28,8 @@ from prisma import Json
 
 from lib.confidence_engine import ConfidenceScoreEngine
 from lib.prisma_client import db
-from lib.session_scorer import AudioFeatures, score_audio_session
+from lib import relevance
+from lib.session_scorer import AudioFeatures, ScoredSession, score_audio_session
 from middlewares.auth_middleware import require_auth
 from schemas.script_practice_schemas import (
     AfterResponse,
@@ -51,10 +52,39 @@ MAX_HISTORY_LIMIT = 50
 
 
 # ── scoring ───────────────────────────────────────────────────────────────────
-def _score_read(transcript: str, duration_seconds: float) -> ReadMetrics:
-    """One spoken read -> full delivery metrics, via the existing audio pipeline."""
+def _script_coverage(script: str, transcript: str) -> float:
+    """Fraction of the script's content words the read actually contains, 0-1.
+
+    Deterministic and offline — this is "did you read this passage", not "was your answer
+    relevant", so it needs word overlap rather than the LLM judge. Below 30% the read is
+    treated as not a read of this script at all.
+    """
+    expected = relevance.content_words(relevance.tokenize(script))
+    if not expected:
+        return 1.0
+    spoken = set(relevance.tokenize(transcript))
+    ratio = len(expected & spoken) / len(expected)
+    return 0.0 if ratio < 0.30 else ratio
+def _score_read(transcript: str, duration_seconds: float, script: Optional[str] = None) -> ReadMetrics:
+    """One spoken read -> full delivery metrics, via the existing audio pipeline.
+
+    Scored strictly (no floors). `script`, when supplied, gates the read on whether it is
+    actually a read of THAT script rather than of something else: this feature reports a
+    before/after gain, and reading a different, easier passage the second time would
+    otherwise register as improvement.
+    """
     features = AudioFeatures(transcript=transcript, duration_seconds=duration_seconds)
-    scored = score_audio_session(features)
+    scored = score_audio_session(features, strict=True)
+    if script:
+        coverage = _script_coverage(script, transcript)
+        scored = ScoredSession(
+            fluency_score=round(scored.fluency_score * coverage, 2),
+            vocabulary_score=round(scored.vocabulary_score * coverage, 2),
+            pronunciation_score=(round(scored.pronunciation_score * coverage, 2)
+                                 if scored.pronunciation_score is not None else None),
+            is_text_only=scored.is_text_only,
+            delivery=scored.delivery,
+        )
     confidence = ConfidenceScoreEngine().calculate_session_confidence(
         scored.to_session_score(is_complete=True)
     )
@@ -137,10 +167,10 @@ async def start_practice(
 async def submit_baseline(
     session_id: str, payload: SpokenAttempt, user_id: str = Depends(require_auth)
 ) -> BaselineResponse:
-    await _owned_session(session_id, user_id)
+    session = await _owned_session(session_id, user_id)
     _validate_attempt(payload)
 
-    metrics = _score_read(payload.transcript, payload.duration_seconds)
+    metrics = _score_read(payload.transcript, payload.duration_seconds, session.scriptText)
     # Re-record support: a new baseline overwrites the old one AND resets the final read
     # (any prior evaluation depended on the old baseline). Status returns to "practicing".
     await db.scriptpracticesession.update(
@@ -176,8 +206,10 @@ async def submit_after(
 
     # Re-score the CURRENT baseline from its stored read, so metrics/feedback always
     # compare against the latest baseline (correct after a baseline re-record).
-    baseline_metrics = _score_read(session.baselineTranscript, session.baselineDuration or 0.0)
-    after_metrics = _score_read(payload.transcript, payload.duration_seconds)
+    baseline_metrics = _score_read(
+        session.baselineTranscript, session.baselineDuration or 0.0, session.scriptText
+    )
+    after_metrics = _score_read(payload.transcript, payload.duration_seconds, session.scriptText)
     gain = round(after_metrics.confidence - baseline_metrics.confidence, 2)
     feedback = _build_feedback(baseline_metrics, after_metrics)
     now = datetime.now(timezone.utc)

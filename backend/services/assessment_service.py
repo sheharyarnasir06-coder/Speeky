@@ -18,6 +18,7 @@ from fastapi import Depends, WebSocket
 from fastapi.responses import JSONResponse
 from prisma import Json
 
+from lib import relevance
 from lib.confidence_engine import ConfidenceScoreEngine, SessionScore
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_auth, ws_require_auth
@@ -173,19 +174,30 @@ def _level_rank(level: LearningLevel) -> int:
     return list(LearningLevel).index(level)
 
 
+#: Scoring outcome for a completed row, shared with every other scored module. Kept as
+#: plain strings rather than a Prisma enum so adding an outcome later needs no migration
+#: on a column that is only ever read by name.
+SCORING_STATUS_SCORED = relevance.STATUS_SCORED
+SCORING_STATUS_UNAVAILABLE = relevance.STATUS_UNAVAILABLE
+
+
 def _estimate_vocabulary_score(text: str) -> float:
-    if not text:
-        return 0.0
-    words = text.split()
-    if not words:
-        return 0.0
+    """Thin wrapper kept for the historical call sites; the implementation now lives in
+    lib/session_scorer.py so the strict/lenient split has exactly one definition."""
+    from lib.session_scorer import estimate_vocabulary_score
 
-    unique_words = len(set(w.lower() for w in words))
-    total_words = len(words)
-    lexical_diversity = unique_words / total_words
-    avg_word_length = sum(len(w) for w in words) / total_words
+    return estimate_vocabulary_score(text, strict=True)
 
-    return round((lexical_diversity * 50) + (min(avg_word_length / 8, 1) * 50), 2)
+
+def _relevance_fields(judgement: relevance.RelevanceResult) -> Dict:
+    """Persist the relevance verdict alongside the scores so a low result is explainable
+    ("answered a different question") rather than an unexplained number."""
+    return {
+        "relevance": judgement.relevance,
+        "relevance_verdict": judgement.verdict,
+        "relevance_source": judgement.source,
+        "relevance_reason": judgement.reason,
+    }
 
 
 def _determine_learning_level(confidence_score: float) -> LearningLevel:
@@ -307,22 +319,67 @@ async def submit_response(
     is_flagged, flag_reason = _integrity_checker.check_text_integrity(
         payload.text_data, payload.clipboard_detected
     )
+    is_audio = payload.audio_features is not None
+
+    # Does the answer address the question? Nothing here used to ask, so a fluent answer
+    # about an unrelated subject scored exactly like a fluent answer to the question.
+    judgement = await relevance.assess(
+        question.text if question else None,
+        payload.text_data,
+        context=f"baseline English assessment, {question.category} question" if question else None,
+    )
 
     if is_flagged:
+        # An integrity-flagged answer is scored ZERO, not dropped. It used to carry
+        # processing_success=False, which _complete_assessment filtered out entirely —
+        # so nine blank answers plus one real one scored exactly like one real answer.
+        # processing_success now means only "the scorer ran", which is what it says.
         processing_result = {
             "question_id": question_id,
             "category": question.category if question else None,
             "is_flagged": True,
             "flag_reason": flag_reason,
-            "processing_success": False,
+            "transcription": payload.text_data,
+            "fluency_score": 0.0,
+            "pronunciation_score": None,
+            "vocabulary_score": 0.0,
+            "is_audio": is_audio,
+            "processing_success": True,
+            "relevance": 0.0,
+            "relevance_verdict": "integrity_flag",
+            "relevance_source": relevance.SOURCE_GATE,
+            "relevance_reason": flag_reason,
         }
-    elif payload.audio_features is not None:
+    elif is_audio:
         # AUDIO pipeline — spoken answer scored via fluency + pronunciation.
-        from lib.session_scorer import AudioFeatures, score_audio_session
+        from lib.session_scorer import AudioFeatures, aggregate_audio_turns, score_audio_session
 
         af = payload.audio_features
-        scored = score_audio_session(
-            AudioFeatures(
+        if af.turns:
+            # Per-utterance timings combined by the function built for exactly this, so a
+            # natural pause between utterances is not counted as hesitation within one.
+            combined = aggregate_audio_turns([
+                AudioFeatures(
+                    transcript=t.transcript,
+                    duration_seconds=t.duration_seconds,
+                    word_timings=t.word_timings,
+                )
+                for t in af.turns
+            ])
+            features = AudioFeatures(
+                # The user can edit the transcript before submitting, so the submitted
+                # text wins; the delivery metrics still come from what was actually said.
+                transcript=payload.text_data,
+                duration_seconds=combined.duration_seconds,
+                speech_rate=combined.speech_rate,
+                pause_count=combined.pause_count,
+                mean_pause_duration=combined.mean_pause_duration,
+                filled_pauses=af.filled_pauses,
+                avg_db=af.avg_db,
+                pronunciation_score=af.pronunciation_score,
+            )
+        else:
+            features = AudioFeatures(
                 transcript=payload.text_data,
                 duration_seconds=af.duration_seconds,
                 word_timings=af.word_timings,
@@ -333,32 +390,40 @@ async def submit_response(
                 avg_db=af.avg_db,
                 pronunciation_score=af.pronunciation_score,
             )
-        )
+        scored = score_audio_session(features, strict=True)
         processing_result = {
             "question_id": question_id,
             "category": question.category if question else None,
             "is_flagged": False,
             "flag_reason": None,
             "transcription": payload.text_data,
-            "fluency_score": scored.fluency_score,
-            "pronunciation_score": scored.pronunciation_score,
-            "vocabulary_score": scored.vocabulary_score,
+            "fluency_score": relevance.apply(scored.fluency_score, judgement.relevance),
+            "pronunciation_score": relevance.apply(scored.pronunciation_score, judgement.relevance),
+            "vocabulary_score": relevance.apply(scored.vocabulary_score, judgement.relevance),
             "is_audio": True,
-            "processing_success": True,
+            "processing_success": judgement.graded,
+            **_relevance_fields(judgement),
         }
     else:
-        # TEXT pipeline — typed answer, no audio signal (fluency/pronunciation unscored).
+        # TEXT pipeline — typed answer. Written fluency is a real measure (length,
+        # diversity, sentence structure); it used to be hardcoded to 0 here, which both
+        # threw the measurement away and — because only audio answers feed the fluency
+        # mean — let mixed assessments avoid ever paying for it.
+        from lib.session_scorer import score_text_session
+
+        scored = score_text_session(payload.text_data, strict=True)
         processing_result = {
             "question_id": question_id,
             "category": question.category if question else None,
             "is_flagged": False,
             "flag_reason": None,
             "transcription": payload.text_data,
-            "fluency_score": 0,
+            "fluency_score": relevance.apply(scored.fluency_score, judgement.relevance),
             "pronunciation_score": None,
-            "vocabulary_score": _estimate_vocabulary_score(payload.text_data),
+            "vocabulary_score": relevance.apply(scored.vocabulary_score, judgement.relevance),
             "is_audio": False,
-            "processing_success": True,
+            "processing_success": judgement.graded,
+            **_relevance_fields(judgement),
         }
 
     responses = list(assessment.responses) + [processing_result]
@@ -405,32 +470,43 @@ async def _try_complete_assessment(assessment: BaselineAssessment) -> Dict:
 
 async def _complete_assessment(assessment: BaselineAssessment) -> Dict:
     responses = assessment.responses
-    successful = [r for r in responses if r.get("processing_success")]
 
-    vocabulary_scores = [r["vocabulary_score"] for r in successful]
+    # If the relevance grader could not run for any answer, this assessment has no
+    # honest score. Producing one anyway — as the offline heuristics used to — is worse
+    # than producing none, because the user cannot tell the difference.
+    ungraded = [r for r in responses if r.get("relevance_source") == relevance.SOURCE_UNAVAILABLE]
+    if ungraded:
+        return await _mark_scoring_unavailable(assessment, len(ungraded), len(responses))
+
+    # Every answered question counts. Answers that failed the integrity check or were
+    # judged irrelevant contribute their (zero) scores rather than being filtered out.
+    scored_responses = [r for r in responses if "vocabulary_score" in r]
+
+    vocabulary_scores = [r["vocabulary_score"] or 0.0 for r in scored_responses]
     avg_vocabulary = round(sum(vocabulary_scores) / len(vocabulary_scores), 2) if vocabulary_scores else 0.0
 
-    # Differentiate pipelines: if any answer came through the AUDIO pipeline, aggregate its
-    # fluency/pronunciation; a purely TEXT assessment carries no audio signal, so those stay
-    # unscored (see ScoringWeights normalization in confidence_engine.py).
-    audio_responses = [r for r in successful if r.get("is_audio")]
-    if audio_responses:
-        fluency_scores = [r["fluency_score"] for r in audio_responses]
-        avg_fluency = round(sum(fluency_scores) / len(fluency_scores), 2)
-        pron_scores = [r["pronunciation_score"] for r in audio_responses if r.get("pronunciation_score") is not None]
-        avg_pronunciation = round(sum(pron_scores) / len(pron_scores), 2) if pron_scores else None
-        is_text_only = False
-    else:
-        avg_fluency = 0.0
-        avg_pronunciation = None
-        is_text_only = True
+    # Fluency is now measured on BOTH pipelines — written fluency for typed answers,
+    # delivery fluency for spoken ones — so it averages across every answer instead of
+    # only the audio ones. Pronunciation stays audio-only: there is no such measurement
+    # for typed text, and None makes confidence_engine renormalize rather than average
+    # in a zero (see ScoringWeights normalization in confidence_engine.py).
+    fluency_scores = [r["fluency_score"] or 0.0 for r in scored_responses]
+    avg_fluency = round(sum(fluency_scores) / len(fluency_scores), 2) if fluency_scores else 0.0
+
+    audio_responses = [r for r in scored_responses if r.get("is_audio")]
+    pron_scores = [r["pronunciation_score"] for r in audio_responses if r.get("pronunciation_score") is not None]
+    avg_pronunciation = round(sum(pron_scores) / len(pron_scores), 2) if pron_scores else None
+    is_text_only = not audio_responses
 
     is_flagged, flag_reason = _integrity_checker.check_response_consistency(
-        [r["transcription"] for r in successful if r.get("transcription")]
+        [r["transcription"] for r in scored_responses if r.get("transcription")]
     )
     if not is_flagged:
+        # Any flagged answer now raises the flag. The old strict-majority rule existed
+        # because the flag changed nothing numerically; now that flagged answers score
+        # zero, the flag is what explains the resulting low score to the user.
         flagged_responses = [r for r in responses if r.get("is_flagged")]
-        is_flagged = len(flagged_responses) > len(responses) / 2
+        is_flagged = bool(flagged_responses)
         flag_reason = flagged_responses[0].get("flag_reason") if flagged_responses else None
 
     confidence_score = await _score_confidence(
@@ -459,6 +535,7 @@ async def _complete_assessment(assessment: BaselineAssessment) -> Dict:
             "learningLevel": learning_level,
             "isFlagged": is_flagged,
             "flagReason": flag_reason,
+            "scoringStatus": SCORING_STATUS_SCORED,
         },
     )
     await db.user.update(
@@ -483,6 +560,7 @@ async def _complete_assessment(assessment: BaselineAssessment) -> Dict:
 
     return {
         "status": "completed",
+        "scoring_status": SCORING_STATUS_SCORED,
         "assessment_id": updated.id,
         "confidence_score": confidence_score,
         "fluency_score": avg_fluency,
@@ -493,6 +571,32 @@ async def _complete_assessment(assessment: BaselineAssessment) -> Dict:
         "is_flagged": is_flagged,
         "flag_reason": flag_reason,
         "regression": regression,
+    }
+
+
+async def _mark_scoring_unavailable(
+    assessment: BaselineAssessment, ungraded_count: int, total: int
+) -> Dict:
+    """The relevance grader could not run — record that, and produce no score.
+
+    Reuses the existing scoringFailed retry path: the row stays incomplete, so a later
+    /summary call re-runs scoring against the already-saved responses once the grader is
+    reachable again. Nothing is lost and nothing is invented in the meantime.
+    """
+    logger.warning(
+        "Relevance grader unavailable for %s of %s answers on assessment %s; withholding score",
+        ungraded_count, total, assessment.id,
+    )
+    await db.baselineassessment.update(
+        where={"id": assessment.id},
+        data={"scoringFailed": True, "scoringStatus": SCORING_STATUS_UNAVAILABLE},
+    )
+    return {
+        "status": "processing",
+        "scoring_status": SCORING_STATUS_UNAVAILABLE,
+        "assessment_id": assessment.id,
+        "confidence_score": None,
+        "message": "Your responses are saved. Scoring is temporarily unavailable — check back shortly.",
     }
 
 
@@ -514,7 +618,11 @@ async def voice_socket(websocket: WebSocket, assessment_id: str):
         return
 
     await websocket.accept()
-    await voice_ws.serve(websocket, mode="transcript")
+    # "timed" rather than "transcript": the assessment scores pause frequency and speech
+    # rate, and "transcript" mode does not compute word timings. Without them
+    # _derive_timing defaulted pause_count to 0, so every spoken answer collected the
+    # full "no pauses" bonus — flawless delivery inferred from data that was never captured.
+    await voice_ws.serve(websocket, mode="timed")
 
 
 async def restart_assessment(user_id: str = Depends(require_auth)):
@@ -725,6 +833,7 @@ async def get_results_summary(assessment_id: str, user_id: str = Depends(require
         "assessment_id": assessment.id,
         "user_id": user_id,
         "display_name": user.name or user.email,
+        "scoring_status": assessment.scoringStatus,
         "completed_at": assessment.completedAt.isoformat(),
         "learning_level": {
             "level": assessment.learningLevel,

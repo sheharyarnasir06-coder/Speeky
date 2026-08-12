@@ -24,8 +24,7 @@ dependencies = [
     "g2p-en>=2.1.0",
     "nltk>=3.9",
     "langdetect>=1.0.9",
-    # Pronunciation Coach (US-95) / Accent Assessment (US-93, US-89) -- also power the
-    # voice-ws realtime pipeline (lib/voice_ws.py): faster-whisper for transcription,
+    # Powers the voice-ws realtime pipeline, faster-whisper for transcription,
     # silero-vad for utterance segmentation -- see lib/recording_engine.py for how they
     # fit together for the upload-based flows.
     "faster-whisper>=1.2.1",
@@ -36,6 +35,15 @@ dependencies = [
     "pronouncing>=0.2.0",
     "torch", # Need to do explicit for torch-cpu.
     "torchaudio",
+    # Live Call (two-way voice) — WebRTC transport + turn-taking orchestration.
+    # STT/TTS/LLM stay the engines above (via services/*) — LiveKit only supplies
+    # transport, VAD-based turn detection, and the Agent/AgentSession runtime.
+    "livekit-api>=0.8",
+    "livekit-agents>=1.0",
+    "livekit-plugins-silero>=1.0",
+    # Optional Beyond Presence avatar (lip-synced video) — env-gated in worker.py,
+    # calls stay audio-only if BEY_API_KEY isn't set.
+    "livekit-plugins-bey>=1.6",
     # GAP-03/GAP-04: anomaly-alert monitoring + scheduled-report dispatch. APScheduler
     # chosen over Celery — no Redis/broker exists in docker-compose.yml today.
     "apscheduler>=3.10",

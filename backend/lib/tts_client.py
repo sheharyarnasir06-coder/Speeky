@@ -11,6 +11,7 @@ per the story's E-02 resolution — that fallback is a client concern, not this 
 
 import io
 import os
+import threading
 import wave
 from pathlib import Path
 
@@ -24,6 +25,7 @@ _DEFAULT_MODEL = os.environ.get("TTS_VOICE_MODEL", "en_US-lessac-medium.onnx")
 
 _voice = None
 _load_attempted = False
+_voice_lock = threading.Lock()
 
 
 class TTSError(Exception):
@@ -43,16 +45,25 @@ def is_configured() -> bool:
 
 
 def _get_voice():
+    """live_call/worker.py's STT/TTS warm-up (fired in a background thread right after
+    room connect) can now call this concurrently with a real in-flight synthesize() —
+    without the lock, two threads racing the old check-then-act (_voice is None,
+    _load_attempted is False) could see _load_attempted flip True on one thread while
+    _voice is still None on the other, making that second caller's synthesize() return
+    None -> raise TTSNotConfigured -> that turn's reply arrives as text with no audio."""
     global _voice, _load_attempted
     if _voice is not None:
         return _voice
-    if _load_attempted:
-        return None
-    _load_attempted = True
-    if not is_configured():
-        return None
-    _voice = PiperVoice.load(str(_model_path()))
-    return _voice
+    with _voice_lock:
+        if _voice is not None:
+            return _voice
+        if _load_attempted:
+            return None
+        _load_attempted = True
+        if not is_configured():
+            return None
+        _voice = PiperVoice.load(str(_model_path()))
+        return _voice
 
 
 def synthesize(text: str, length_scale: float = 1.0) -> bytes:

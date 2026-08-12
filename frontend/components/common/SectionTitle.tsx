@@ -28,11 +28,11 @@ export function SectionTitle({
       )}
     >
       {eyebrow ? (
-        <span className="text-sm font-medium tracking-wide text-primary">
+        <span className="text-sm font-semibold tracking-wide text-accent">
           {eyebrow}
         </span>
       ) : null}
-      <h2 className="font-serif text-h1 font-semibold text-foreground sm:text-4xl">
+      <h2 className="max-w-3xl text-balance font-serif text-h1 font-semibold text-foreground sm:text-4xl">
         {title}
       </h2>
       {description ? (

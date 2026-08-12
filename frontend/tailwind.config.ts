@@ -119,6 +119,11 @@ const config = {
           "0%": { opacity: "0", transform: "scale(0.96)" },
           "100%": { opacity: "1", transform: "scale(1)" },
         },
+        // Live Call caption hand-off: outgoing line fades while drifting up as if being pushed off by the incoming one.
+        "fade-out-up": {
+          "0%": { opacity: "1", transform: "translateY(0)" },
+          "100%": { opacity: "0", transform: "translateY(-10px)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 300ms var(--ease-out-expo) both",
@@ -129,6 +134,7 @@ const config = {
         shimmer: "shimmer 1.6s infinite",
         "grow-x": "grow-x 600ms var(--ease-out-expo) both",
         "scale-in": "scale-in 200ms var(--ease-spring) both",
+        "fade-out-up": "fade-out-up 320ms var(--ease-standard) both",
       },
     },
   },

@@ -15,6 +15,7 @@ import { getCoachingScenarios, type CoachingScenarioMeta } from "@/lib/coaching"
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { CodeSwitchWordsCard } from "@/components/dashboard/CodeSwitchWordsCard";
 import { ExploreResumeBanner } from "@/components/dashboard/ExploreResumeBanner";
+import { AiScenarioCardArt } from "@/components/common/AiScenarioThumbnail";
 import { cn } from "@/lib/utils";
 
 const SCENARIO_ICONS: Record<string, typeof Mail> = {
@@ -24,6 +25,12 @@ const SCENARIO_ICONS: Record<string, typeof Mail> = {
   presentation_prep: Presentation,
   general_workplace: Briefcase,
 };
+
+const AI_AVATAR_SCENARIO_KEYS = new Set([
+  "client_communication",
+  "meeting_communication",
+  "presentation_prep",
+]);
 
 export default function CoachingPage() {
   const { access } = useAssessmentAccess();
@@ -62,20 +69,25 @@ export default function CoachingPage() {
 
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {(scenarios ?? PLACEHOLDER_SCENARIOS).map((scenario, index) => {
           const Icon = SCENARIO_ICONS[scenario.key] ?? Briefcase;
           const locked = !isUnlocked;
+          const showAiAvatar = AI_AVATAR_SCENARIO_KEYS.has(scenario.key);
           const card = (
             <div
               className={cn(
-                "group flex h-full animate-fade-up flex-col justify-between rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
+                "group relative flex h-full animate-fade-up overflow-hidden rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
+                showAiAvatar ? "min-h-[230px] flex-col justify-between sm:pr-[46%]" : "flex-col justify-between",
                 !locked && "cursor-pointer hover:-translate-y-1 hover:shadow-md",
                 locked && "opacity-60",
               )}
               style={{ animationDelay: `${index * 70}ms` }}
             >
-              <div>
+              {showAiAvatar ? (
+                <AiScenarioCardArt title={scenario.label} locked={locked} />
+              ) : null}
+              <div className="relative z-10">
                 <div className="mb-6 flex items-start justify-between">
                   <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary text-primary transition-transform duration-300 group-hover:scale-110">
                     <Icon className="h-5 w-5" aria-hidden="true" />
@@ -96,7 +108,7 @@ export default function CoachingPage() {
                     : "Write your response and get graded feedback."}
                 </p>
               </div>
-              <div className="mt-6 text-sm font-medium text-primary">
+              <div className="relative z-10 mt-6 text-sm font-medium text-primary">
                 {locked ? (
                   <span className="text-muted-foreground">Complete assessment to unlock</span>
                 ) : (

@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from fastapi import Depends, WebSocket
 
-from lib import ai_client, explore_sessions, kv_store, voice_ws
+from lib import ai_client, explore_sessions, kv_store, llm_client, prompts, relevance, voice_ws
 from middlewares.auth_middleware import require_auth, ws_require_auth
 from schemas.interview_coach_schemas import (
     AIExchange,
@@ -208,67 +208,255 @@ def _closing_message(session: dict) -> str:
     return CLOSING_MESSAGE_TEMPLATES.get(mode, "That wraps up your interview — thank you for your time today.")
 
 
-# ── scoring (pure) ────────────────────────────────────────────────────────────
-def _score_round(round_type: InterviewMode, exchanges: List[dict]) -> RoundScorecard:
+# ── scoring ───────────────────────────────────────────────────────────────────
+# Scores are EARNED from what the candidate actually said. The previous implementation
+# started every metric at 85 (90 for case study) and subtracted per flag, where the flags
+# came from a word count and two client-supplied integers that default to 0 — so a
+# session with no answers at all scored 85, and four words of gibberish scored the same
+# as a strong answer. `relevance` was literally `clarity + 5`.
+#
+# Now: an LLM grades every answer against the question it was asked (one call per
+# session, not per turn), a deterministic gate vetoes anything that is not an answer, and
+# the behavioural flags apply bounded deductions *after* the earned score rather than
+# being the only input to it.
+
+#: Deduction per occurrence, applied after grading. Bounded so flags shape a score
+#: rather than define it.
+_FLAG_DEDUCTION = {
+    "rambling": 10,
+    "one_word_answer": 12,
+    "prolonged_silence": 6,
+    "vague_technical_answer": 12,
+    "jumped_to_number": 15,
+}
+_MAX_FLAG_DEDUCTION = 35
+
+SCORING_SCORED = relevance.STATUS_SCORED
+SCORING_INSUFFICIENT = relevance.STATUS_INSUFFICIENT
+SCORING_UNAVAILABLE = relevance.STATUS_UNAVAILABLE
+
+
+class _AnswerGrade:
+    """One answer's earned scores, already gated for relevance."""
+
+    __slots__ = ("relevance", "structure", "specificity", "substance")
+
+    def __init__(self, relevance: float, structure: float, specificity: float, substance: float):
+        self.relevance = relevance
+        self.structure = structure
+        self.specificity = specificity
+        self.substance = substance
+
+    @property
+    def clarity(self) -> float:
+        """Clarity is the blend of being understandable and being concrete — it is not a
+        free-standing measurement, but it is at least derived from graded evidence now."""
+        return round((self.structure * 0.6) + (self.specificity * 0.4), 2)
+
+
+def _answered_exchanges(exchanges: List[dict]) -> List[dict]:
+    return [e for e in exchanges if e.get("answer")]
+
+
+def _numbered_transcript(answered: List[dict]) -> str:
+    lines = []
+    for i, e in enumerate(answered):
+        lines.append(f"[{i}] {e['speaker']} asked: {e['question']}")
+        lines.append(f"[{i}] Candidate answered: {e['answer']}")
+    return "\n".join(lines)
+
+
+async def _grade_answers(session: dict) -> Optional[List[_AnswerGrade]]:
+    """Grade every answered exchange. Returns None when the grader is unavailable.
+
+    None is distinct from "scored badly" and stays that way all the way to the API: a
+    session that could not be graded reports no number rather than a fabricated one.
+    """
+    answered = _answered_exchanges(session["exchanges"])
+    if not answered:
+        return []
+
+    # The deterministic gate runs first and offline. Anything it rejects is not an answer,
+    # scores zero, and is excluded from the LLM request entirely.
+    gates = [relevance.evaluate_substance(e["answer"], e.get("question")) for e in answered]
+    gradeable = [i for i, g in enumerate(gates) if not g.rejected]
+
+    llm_grades: dict = {}
+    if gradeable:
+        if not llm_client.is_configured():
+            return None
+        subset = [answered[i] for i in gradeable]
+        try:
+            raw = await llm_client.chat_json(
+                [{"role": "user", "content": prompts.build_interview_answer_grading_prompt(
+                    transcript=_numbered_transcript(subset),
+                    answer_count=len(subset),
+                    context=_persona_description(session),
+                )}],
+                temperature=0.0,
+                max_tokens=1500,
+            )
+        except llm_client.LLMError:
+            return None
+        for entry in raw.get("answers") or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                local_index = int(entry.get("index"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= local_index < len(gradeable):
+                llm_grades[gradeable[local_index]] = entry
+        # A grader that skipped answers has not graded the session; do not fill the gaps
+        # with defaults, which is how a partial response becomes an invented score.
+        if len(llm_grades) < len(gradeable):
+            return None
+
+    grades = []
+    for i, gate in enumerate(gates):
+        entry = llm_grades.get(i)
+        if entry is None:
+            grades.append(_AnswerGrade(0.0, 0.0, 0.0, 0.0))
+            continue
+        rel = relevance._clamp_score(entry.get("relevance"), 0.0) or 0.0
+        factor = relevance.relevance_multiplier(rel)
+        structure = (relevance._clamp_score(entry.get("structure"), 0.0) or 0.0) * factor
+        specificity = (relevance._clamp_score(entry.get("specificity"), 0.0) or 0.0) * factor
+        # The gate caps substance: a model talked into a high score for thin content does
+        # not get to override arithmetic that counted the words.
+        substance = min(relevance._clamp_score(entry.get("substance"), 0.0) or 0.0, gate.substance)
+        grades.append(_AnswerGrade(rel, round(structure, 2), round(specificity, 2), substance))
+    return grades
+
+
+def _flag_deduction(exchanges: List[dict]) -> int:
     flags = [f for e in exchanges for f in e.get("flags", [])]
-    base = 85 - 15 * flags.count("rambling") - 20 * flags.count("one_word_answer")
-    base = max(base, 10)
-    summary = "Solid, structured answers." if base >= 70 else "Answers need more structure and specific examples."
-    return RoundScorecard(round_type=round_type, scores={"clarity": base, "structure": base - 5, "relevance": base + 5}, summary=summary)
+    total = sum(_FLAG_DEDUCTION.get(f, 0) for f in flags)
+    return min(total, _MAX_FLAG_DEDUCTION)
 
 
-def _score_panel_rounds(session: dict) -> List[RoundScorecard]:
+def _mean(values: List[float]) -> float:
+    return round(sum(values) / len(values), 2) if values else 0.0
+
+
+def _score_round(
+    round_type: InterviewMode, exchanges: List[dict], grades: List[_AnswerGrade]
+) -> RoundScorecard:
+    """Scorecard for one round from graded answers. `relevance` is a real measurement
+    now, not `clarity + 5`."""
+    if not grades:
+        return RoundScorecard(
+            round_type=round_type,
+            scores={},
+            summary="No answers were given, so there is nothing to score.",
+        )
+    deduction = _flag_deduction(exchanges)
+    clarity = _clamp_score(_mean([g.clarity for g in grades]) - deduction)
+    structure = _clamp_score(_mean([g.structure for g in grades]) - deduction)
+    relevance_score = _clamp_score(_mean([g.relevance for g in grades]))
+    summary = ("Solid, structured answers." if clarity >= 70
+               else "Answers need more structure and specific examples.")
+    if relevance_score < 40:
+        summary = "Answers did not address the questions that were asked."
+    return RoundScorecard(
+        round_type=round_type,
+        scores={"clarity": clarity, "structure": structure, "relevance": relevance_score},
+        summary=summary,
+    )
+
+
+def _clamp_score(value: float) -> int:
+    """0-100, integer. The old module had no upper clamp at all — case study's
+    communication score could reach 99 from a base of 90 plus a clarifying-question bonus."""
+    return int(max(0.0, min(100.0, value)))
+
+
+def _score_panel_rounds(session: dict, grades: List[_AnswerGrade]) -> List[RoundScorecard]:
+    answered = _answered_exchanges(session["exchanges"])
+    by_index = {id(e): g for e, g in zip(answered, grades)}
     cards = []
     for panelist in session["panelists"]:
         name = panelist["name"]
-        their = [e for e in session["exchanges"] if e["speaker"] == name and e.get("answer")]
-        flags = [f for e in their for f in e.get("flags", [])]
-        base = 85 - 15 * flags.count("rambling") - 20 * flags.count("one_word_answer") - 15 * flags.count("vague_technical_answer")
-        base = max(base, 10)
+        their = [e for e in answered if e["speaker"] == name]
+        their_grades = [by_index[id(e)] for e in their if id(e) in by_index]
+        if not their_grades:
+            cards.append(RoundScorecard(
+                round_type=InterviewMode.PANEL, scores={},
+                summary=f"No answers to {name}'s ({panelist['focus_area']}) questions.",
+            ))
+            continue
+        deduction = _flag_deduction(their)
+        score = _clamp_score(_mean([g.clarity for g in their_grades]) - deduction)
         summary = (f"Answered {name}'s ({panelist['focus_area']}) questions well."
-                   if base >= 70 else
+                   if score >= 70 else
                    f"Needs stronger answers when addressing {name}'s ({panelist['focus_area']}) questions.")
-        cards.append(RoundScorecard(round_type=InterviewMode.PANEL, scores={f"{name}_score": base}, summary=summary))
+        cards.append(RoundScorecard(
+            round_type=InterviewMode.PANEL, scores={f"{name}_score": score}, summary=summary))
     return cards
 
 
-def _score_case_round(session: dict) -> RoundScorecard:
+def _score_case_round(session: dict, grades: List[_AnswerGrade]) -> RoundScorecard:
+    answered = _answered_exchanges(session["exchanges"])
+    if not grades:
+        return RoundScorecard(
+            round_type=InterviewMode.CASE_STUDY, scores={},
+            summary="No answers were given, so there is nothing to score.",
+        )
     flags = session.get("case_flags_log", [])
     jumped = flags.count("jumped_to_number")
     off_framework = flags.count("rambling")
     clarifying = flags.count("clarifying_question")
-    structure_score = max(90 - (jumped * 25) - (off_framework * 20), 10)
-    numeracy_score = max(90 - (jumped * 10), 20)
-    communication_score = max(90 - (flags.count("prolonged_silence") * 15) + min(clarifying * 3, 9), 15)
-    total_turns = len([e for e in session["exchanges"] if e.get("answer")])
+
+    # Each metric now starts from graded evidence rather than a flat 90.
+    structure_score = _clamp_score(
+        _mean([g.structure for g in grades]) - (jumped * 15) - (off_framework * 12)
+    )
+    numeracy_score = _clamp_score(_mean([g.specificity for g in grades]) - (jumped * 10))
+    communication_score = _clamp_score(
+        _mean([g.clarity for g in grades])
+        - (flags.count("prolonged_silence") * 10)
+        + min(clarifying * 3, 9)
+    )
+
+    total_turns = len(answered)
     total_flags = len(flags)
     recalibration = None
     if total_turns <= 2 and total_flags == 0:
         recalibration = "Finished quickly with no issues — consider a harder difficulty next case."
     elif total_flags >= 3:
         recalibration = "Struggled significantly this case — consider an easier difficulty next time."
-    summary = "Sound framework and clear assumptions." if structure_score >= 70 else "Needs a clearer upfront structure before diving into numbers."
+    summary = ("Sound framework and clear assumptions." if structure_score >= 70
+               else "Needs a clearer upfront structure before diving into numbers.")
     if recalibration:
         summary += f" {recalibration}"
     return RoundScorecard(
         round_type=InterviewMode.CASE_STUDY,
-        scores={"structure": structure_score, "numeracy": numeracy_score, "communication_of_assumptions": communication_score},
+        scores={"structure": structure_score, "numeracy": numeracy_score,
+                "communication_of_assumptions": communication_score},
         summary=summary,
     )
 
 
-def _score_multi_round(session: dict) -> List[RoundScorecard]:
+def _score_multi_round(session: dict, grades: List[_AnswerGrade]) -> List[RoundScorecard]:
     rounds = session["rounds"]
     boundaries = session["round_boundaries"]
     exchanges = session["exchanges"]
+    answered = _answered_exchanges(exchanges)
+    grade_by_exchange = {id(e): g for e, g in zip(answered, grades)}
+
     cards = []
     for i, r in enumerate(rounds[:len(boundaries)]):
         round_type = r if isinstance(r, InterviewMode) else InterviewMode(r)
         start = boundaries[i]
         end = boundaries[i + 1] if i + 1 < len(boundaries) else len(exchanges)
-        cards.append(_score_round(round_type, exchanges[start:end]))
-    if len(cards) >= 2:
-        clarities = [sc.scores.get("clarity", 0) for sc in cards]
+        slice_ = exchanges[start:end]
+        slice_grades = [grade_by_exchange[id(e)] for e in slice_ if id(e) in grade_by_exchange]
+        cards.append(_score_round(round_type, slice_, slice_grades))
+    if not cards:
+        return cards
+    scored_cards = [c for c in cards if "clarity" in c.scores]
+    if len(scored_cards) >= 2:
+        clarities = [sc.scores["clarity"] for sc in scored_cards]
         if clarities[-1] > clarities[0] + 5:
             trend = "Performance improved over the course of the day."
         elif clarities[-1] < clarities[0] - 5:
@@ -584,17 +772,38 @@ async def _end_session(user_id: str, session_id: str) -> SessionFeedback:
         session["ended_at"] = _now()
         await kv_store.store.update(NAMESPACE, session_id, session)
 
-    if mode == InterviewMode.CASE_STUDY:
-        scorecards = [_score_case_round(session)]
-    elif mode == InterviewMode.PANEL:
-        scorecards = _score_panel_rounds(session)
-    elif is_multi_round:
-        scorecards = _score_multi_round(session)
-    else:
-        scorecards = [_score_round(r if isinstance(r, InterviewMode) else InterviewMode(r), session["exchanges"]) for r in rounds]
+    grades = await _grade_answers(session)
 
-    all_scores = [v for sc in scorecards for v in sc.scores.values()]
-    overall = int(sum(all_scores) / max(len(all_scores), 1))
+    if grades is None:
+        # Grader unreachable. Report that plainly; do not substitute a heuristic number
+        # the user has no way to distinguish from a real grade.
+        scorecards = []
+        overall = None
+        scoring_status = SCORING_UNAVAILABLE
+    elif not grades:
+        scorecards = []
+        overall = None
+        scoring_status = SCORING_INSUFFICIENT
+    else:
+        if mode == InterviewMode.CASE_STUDY:
+            scorecards = [_score_case_round(session, grades)]
+        elif mode == InterviewMode.PANEL:
+            scorecards = _score_panel_rounds(session, grades)
+        elif is_multi_round:
+            scorecards = _score_multi_round(session, grades)
+        else:
+            # One card for the single round this session actually is. The old code built
+            # one card per entry in `rounds` and handed each the *full* exchange list,
+            # which duplicated an identical score whenever `rounds` held more than one.
+            round_type = rounds[0] if rounds else mode
+            scorecards = [_score_round(
+                round_type if isinstance(round_type, InterviewMode) else InterviewMode(round_type),
+                session["exchanges"], grades,
+            )]
+
+        all_scores = [v for sc in scorecards for v in sc.scores.values()]
+        overall = _clamp_score(sum(all_scores) / len(all_scores)) if all_scores else None
+        scoring_status = SCORING_SCORED if overall is not None else SCORING_INSUFFICIENT
 
     script_instruction = "You are an interview coach producing a concise, actionable before/after rewrite of the user's weakest answer."
     if is_multi_round:
@@ -611,7 +820,8 @@ async def _end_session(user_id: str, session_id: str) -> SessionFeedback:
                if session["status"] == SessionStatus.ABANDONED else _closing_message(session))
     return SessionFeedback(
         session_id=session_id, mode=mode, closing_message=closing,
-        round_scorecards=scorecards, overall_score=overall, actionable_script=script,
+        round_scorecards=scorecards, overall_score=overall,
+        scoring_status=scoring_status, actionable_script=script,
         ended_at=session["ended_at"],
     )
 

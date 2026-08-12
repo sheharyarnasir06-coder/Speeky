@@ -40,12 +40,23 @@ export interface CoachingResult {
     confidence: number | null;
   };
   headline_metric: string;
-  met_objective: boolean;
+  /** "scored" | "unavailable". Every value in `scores` is null when unavailable — there
+   *  is no offline scoring fallback any more, because the previous one started at 88 and
+   *  was indistinguishable from a real grade. */
+  scoring_status: "scored" | "unavailable";
+  met_objective: boolean | null;
   flags: CoachingFlag[];
   highlights: { kind: string; phrase: string }[];
   polished_version: string;
   summary: string;
   graded_by: string;
+  relevance: {
+    relevance: number | null;
+    substance: number | null;
+    verdict: string;
+    source: string;
+    reason: string;
+  } | null;
 }
 
 export interface RoleplayTurnResult {

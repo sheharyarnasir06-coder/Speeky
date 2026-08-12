@@ -37,6 +37,12 @@ export interface EndConversationResult {
   session_id: string;
   status: string;
   duration_seconds: number;
+  /** Always "scored" here: fluency/vocabulary are measured from the turns and are real
+   *  with or without the LLM. A failed topic check shows up as `topic_relevance: null`. */
+  scoring_status: "scored";
+  /** How much of the session actually engaged with the chosen topic, 0-100. Null when the
+   *  judge could not run, in which case the scores below are unscaled. */
+  topic_relevance: number | null;
   fluency_score: number;
   vocabulary_score: number;
   pronunciation_score: number | null;

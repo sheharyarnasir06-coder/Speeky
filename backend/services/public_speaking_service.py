@@ -1,7 +1,14 @@
 """
 Public Speaking Coach Service — PSC-US-01, PSC-US-03, PSC-US-04, PSC-US-05, PSC-US-06, PSC-US-07, PSC-US-11, PSC-US-12, PSC-US-14
 
-Audio/text-based public speaking analysis. Ignores video-specific requirements (eye contact, physical presence).
+Audio/text/video-based public speaking analysis.
+
+Physical presence (eye contact, posture, gesture, expression) is measured when the user opts
+into the camera. MediaPipe runs entirely in the browser; this service only ever sees the
+aggregated `video_features` payload, exactly as it only ever sees derived `audio_features`
+rather than raw audio. Scored by lib/video_scorer.py, which is deliberately additive — see
+`_generate_scorecard` for why `overall_score` must not absorb it.
+
 Focuses on:
 - Speech structure analysis (business pitch, classroom, TED-style)
 - Speaking pace analytics (WPM calculation)
@@ -11,6 +18,7 @@ Focuses on:
 - Audience Q&A simulation
 - Motivational speech evaluation
 - Casual event speech feedback
+- Physical delivery analysis when the camera is on (PSC video)
 """
 
 import base64
@@ -19,12 +27,22 @@ import logging
 import re
 import uuid
 from dataclasses import asdict
+from itertools import zip_longest
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import WebSocket
 from prisma import Json
-from lib import llm_client, recording_engine, session_scorer, voice_ws
+from lib import (
+    llm_client,
+    prompts,
+    recording_engine,
+    register_scorer,
+    relevance,
+    session_scorer,
+    video_scorer,
+    voice_ws,
+)
 from lib.audio_io import AudioDecodeError
 from lib.prisma_client import db
 from lib.session_scorer import AudioFeatures
@@ -47,6 +65,18 @@ SPEECH_TYPES = {
         "ideal_wpm_range": (130, 160),
         "prioritize_structure": True,
         "prioritize_persuasiveness": True,
+        # A pitch that cannot survive one follow-up question is not a pitch, so the Q&A is part
+        # of the exercise rather than an optional coda — see submit_qa_response for how it folds
+        # back into overall_score.
+        "qa_enabled": True,
+        # Measured and credible. Some animation reads as conviction; a monotone pitch reads as
+        # not believing your own numbers, so the floor is not zero.
+        "register": {
+            "label": "a business pitch",
+            "arousal_band": (35, 70),
+            "smile_band": (5, 35),
+            "formality": "formal",
+        },
     },
     "casual_event": {
         "label": "Casual Event Speech (Wedding/Toast)",
@@ -54,6 +84,18 @@ SPEECH_TYPES = {
         "ideal_wpm_range": (120, 150),
         "disable_corporate_tone": True,
         "prioritize_warmth": True,
+        # Nobody interrogates a best man. An "audience follow-up question" here is a format
+        # error, not a missing feature.
+        "qa_enabled": False,
+        # A toast is the one format where warmth is the point. Deadpan is a failure here even
+        # if every other metric is strong.
+        "register": {
+            "label": "a wedding or celebration speech",
+            "arousal_band": (45, 85),
+            "smile_band": (20, 65),
+            "formality": "informal",
+            "laughter_ok": True,
+        },
     },
     "motivational": {
         "label": "Motivational Speech",
@@ -61,6 +103,17 @@ SPEECH_TYPES = {
         "ideal_wpm_range": (130, 160),
         "prioritize_energy": True,
         "prioritize_tone_variation": True,
+        # A rallying speech ends on its call to action. Stopping to take a question undercuts
+        # the one thing the format is for.
+        "qa_enabled": False,
+        # Highest expected energy of any format — this is the one place where a wide pitch
+        # range and big dynamics are the target rather than a risk.
+        "register": {
+            "label": "a motivational speech",
+            "arousal_band": (60, 100),
+            "smile_band": (10, 50),
+            "formality": "neutral",
+        },
     },
     "classroom": {
         "label": "Classroom Presentation",
@@ -68,6 +121,17 @@ SPEECH_TYPES = {
         "ideal_wpm_range": (130, 150),
         "check_transitions": True,
         "track_filler_words": True,
+        "qa_enabled": True,
+        # A teacher who locks onto one spot is a problem, so this is the one format where a
+        # HIGHER gaze-shift rate scores better. See video_scorer._presence_weights.
+        "reward_gaze_scan": True,
+        # Clear and even. Warmth helps, theatrics distract from the material.
+        "register": {
+            "label": "a classroom presentation",
+            "arousal_band": (35, 70),
+            "smile_band": (8, 40),
+            "formality": "neutral",
+        },
     },
     "ted_talk": {
         "label": "TED-Style Talk",
@@ -75,6 +139,15 @@ SPEECH_TYPES = {
         "ideal_wpm_range": (130, 150),
         "prioritize_storytelling": True,
         "prioritize_engagement": True,
+        "qa_enabled": True,
+        # Storytelling wants range: the dynamic band is deliberately wide, because a good talk
+        # moves between quiet and emphatic rather than sitting at one level.
+        "register": {
+            "label": "a TED-style talk",
+            "arousal_band": (45, 90),
+            "smile_band": (10, 50),
+            "formality": "neutral",
+        },
     },
 }
 
@@ -93,6 +166,12 @@ SLOW_WPM_THRESHOLD = 110
 # Audio quality thresholds
 MIC_QUIET_DB = -45.0
 CLIPPING_DB = -3.0
+
+# How much of the headline score a scenario's Q&A phase is worth. The speech itself keeps the
+# other 70%: fielding one question well cannot rescue a poorly delivered pitch, but freezing on
+# it should visibly cost you. Only applies to scenarios with "qa_enabled": True — everywhere
+# else overall_score is the speech alone.
+QA_WEIGHT = 0.30
 
 
 class _AgentProsody:
@@ -144,6 +223,10 @@ async def start_session(
         "input_mode": request.input_mode,
         "structure_elements": speech_config["structure_elements"],
         "ideal_wpm_range": speech_config["ideal_wpm_range"],
+        # The client describes the session's flow on its setup card before this call exists, so
+        # it keeps its own copy of the flag — but once a session is live this is the authority,
+        # so a scenario's flow can be changed here without a frontend release going out first.
+        "qa_enabled": speech_config.get("qa_enabled", False),
         "topic": request.topic,
         "status": "in_progress",
     }
@@ -199,16 +282,24 @@ async def submit_turn(
         audio_features = None
         analysis = None
 
+    # Keep the None-vs-missing distinction inside the blob: a metric that was measured as
+    # unavailable is meaningful to the scorer and to the results UI. Only the COLUMN has to be
+    # omitted when there's no video at all (see below).
+    video_features = turn.video_features.model_dump() if turn.video_features else None
+
     scorecard = await _generate_scorecard(
         speech_type=str(session.speechType),
         text_content=text_content,
         audio_features=audio_features,
         analysis=analysis,
         speech_config=speech_config,
+        video_features=video_features,
+        topic=session.topic,
+        raw_audio_features=turn.audio_features,
     )
-    
-    # Update session — audioFeatures is optional (Json?). Skip the key entirely when
-    # there's no audio instead of sending None, which prisma-client-py can't serialize.
+
+    # Update session — audioFeatures/videoFeatures are optional (Json?). Skip the key entirely
+    # when there's no audio/video instead of sending None, which prisma-client-py can't serialize.
     update_data = {
         "transcript": text_content,
         "status": "completed" if turn.is_final else "in_progress",
@@ -217,6 +308,8 @@ async def submit_turn(
     }
     if audio_features:
         update_data["audioFeatures"] = Json(asdict(audio_features))
+    if video_features:
+        update_data["videoFeatures"] = Json(video_features)
 
     await db.publicspeakingsession.update(
         where={"id": session_id},
@@ -224,7 +317,8 @@ async def submit_turn(
     )
     
     should_trigger_qa = (
-        turn.is_final and 
+        speech_config.get("qa_enabled", False) and
+        turn.is_final and
         len(text_content) > 100 and
         not _is_nonsense_content(text_content)
     )
@@ -280,23 +374,28 @@ async def submit_qa_response(
         user_response=text_content,
         audio_features=audio_features,
     )
-    
+
+    # The merged card is written back to the `scorecard` column, not just returned. It used to be
+    # merged in memory and thrown away, so qa_handling reached the results screen and nothing
+    # else — the progress dashboard, which reads that column, never saw a Q&A number at all.
+    merged_scorecard = _blend_qa_into_scorecard(session.scorecard, qa_score)
+
     await db.publicspeakingsession.update(
         where={"id": session_id},
         data={
             "userQaResponse": text_content,
             "status": "completed",
             "completedAt": datetime.now(timezone.utc),
+            # Kept as its own column: this is the raw Q&A record, qa_handling is the copy the
+            # scorecard readers see.
             "qaScore": Json(qa_score),
+            "scorecard": Json(merged_scorecard),
         }
     )
-    
-    updated_scorecard = session.scorecard or {}
-    updated_scorecard["qa_handling"] = qa_score
-    
+
     return {
         "qa_score": qa_score,
-        "updated_scorecard": updated_scorecard,
+        "updated_scorecard": merged_scorecard,
         "session_id": session_id,
     }
 
@@ -412,17 +511,42 @@ async def _generate_scorecard(
     audio_features: Optional[AudioFeatures],
     analysis: Optional["recording_engine.RecordingAnalysis"],
     speech_config: Dict,
+    video_features: Optional[Dict] = None,
+    topic: Optional[str] = None,
+    # The raw client feature dict, NOT the AudioFeatures dataclass — that class has no prosody
+    # fields, so pitch_range_semitones / intensity_variation_db would be dropped before the
+    # register scorer ever sees them.
+    raw_audio_features: Optional[Dict] = None,
 ) -> Dict:
     if audio_features:
-        scored = session_scorer.score_audio_session(audio_features)
+        scored = session_scorer.score_audio_session(audio_features, strict=True)
     else:
-        scored = session_scorer.score_text_session(text_content)
+        scored = session_scorer.score_text_session(text_content, strict=True)
+
+    # PublicSpeakingSession.topic was stored and echoed but never compared with what the
+    # speaker actually said, so a transcript containing "problem", "solution" and "in
+    # conclusion" scored 100 on structure regardless of subject.
+    judgement = await relevance.assess(
+        topic, text_content,
+        context=f"a {speech_type} practice speech on the topic the speaker chose",
+    ) if topic else None
+    topic_relevance = judgement.relevance if judgement else None
 
     wpm_metrics = _calculate_wpm(text_content, audio_features)
     filler_analysis = _analyze_filler_words(text_content, audio_features)
     tone_analysis = _analyze_tone_variation(text_content, analysis)
     structure_analysis = _evaluate_structure(speech_type, text_content, speech_config)
     clarity_analysis = _analyze_voice_clarity(analysis)
+
+    # Register is scored before the overall pass because its VOICE channel feeds tone_score.
+    # audio_features is the raw dict from the client (prosody), not the AudioFeatures dataclass —
+    # arousal needs pitch_range_semitones / intensity_variation_db, which never enter that class.
+    scored_register = register_scorer.score_register(
+        text=text_content,
+        audio_features=raw_audio_features,
+        video=video_features,
+        speech_config=speech_config,
+    )
 
     scores = _calculate_overall_scores(
         speech_type=speech_type,
@@ -433,6 +557,8 @@ async def _generate_scorecard(
         clarity_analysis=clarity_analysis,
         scored=scored,
         speech_config=speech_config,
+        topic_relevance=topic_relevance,
+        register_voice=scored_register.voice_arousal,
     )
 
     flags = _generate_flags(
@@ -457,10 +583,50 @@ async def _generate_scorecard(
         speech_config=speech_config,
     )
 
+    # Video is scored AFTER the summary and deliberately never reaches _calculate_overall_scores.
+    # Blending it into overall_score would make a user's pre-camera and post-camera sessions
+    # incomparable on the progress dashboard, and would make the same number mean different
+    # things for camera and non-camera users on one chart. It contributes to the qualitative
+    # surface (flags, highlights, tips) — which is where the value actually is — plus its own
+    # visual_presence tile. If a blended headline is ever wanted, add a separate key and a
+    # scoring_version marker; do not overload this one.
+    # Register feedback merges the same way, but unlike video it can apply to a camera-off
+    # session — the voice and word channels are always there on the audio path.
+    if scored_register.issues or scored_register.highlights:
+        flags = flags + scored_register.issues
+        highlights = highlights + scored_register.highlights
+        register_tips = [i["suggestion"] for i in scored_register.issues if i.get("suggestion")]
+        actionable_tips = _interleave(actionable_tips, register_tips)[:6]
+
+    scored_video = video_scorer.score_video_session(video_features, speech_config)
+    if video_features:
+        flags = flags + scored_video.issues
+        highlights = highlights + scored_video.highlights
+
+        # Interleave rather than append: video tips appended after the audio list would sit
+        # below the existing [:5] cap and either overflow it (12 tips is not a shortlist) or be
+        # cut entirely. Alternating keeps both modalities represented in the top few.
+        video_tips = [i["suggestion"] for i in scored_video.issues if i.get("suggestion")]
+        actionable_tips = _interleave(actionable_tips, video_tips)[:6]
+
+        summary = _append_presence_sentence(summary, scored_video)
+
     return {
         "speech_type": str(speech_type),
-        "input_mode": "audio" if audio_features else "text",
+        "input_mode": _resolve_input_mode(audio_features, video_features),
+        # Delivery (pace, clarity, tone, structure) is measured from the audio itself and
+        # is a real score with or without the LLM, so this stays "scored" — unlike the
+        # baseline assessment, where the LLM judgement IS the score. When the topic judge
+        # could not run, `topic_relevance` is null and overall_score is simply unscaled;
+        # that is the honest, narrower claim.
+        "scoring_status": relevance.STATUS_SCORED,
+        "topic_relevance": topic_relevance,
         "overall_score": scores["overall"],
+        # The speech half, frozen. On a qa_enabled scenario overall_score is later rewritten as a
+        # 70/30 blend with the Q&A (see _blend_qa_into_scorecard); blending from this fixed base
+        # rather than from overall_score keeps that operation idempotent and leaves the delivery
+        # figure readable after the fact.
+        "speech_only_score": scores["overall"],
         "confidence": scores["confidence"],
         "pacing": scores["pacing"],
         "tone_variation": scores["tone_variation"],
@@ -470,6 +636,7 @@ async def _generate_scorecard(
         "fluency": scored.fluency_score,
         "vocabulary": scored.vocabulary_score,
         "pronunciation": scored.pronunciation_score,
+        "emotional_connection": scored_register.emotional_register,
         "words_per_minute": wpm_metrics["wpm"],
         "filler_word_count": filler_analysis["count"],
         "filler_words": filler_analysis["words"],
@@ -479,7 +646,33 @@ async def _generate_scorecard(
         "summary": summary,
         "actionable_tips": actionable_tips,
         "delivery": scored.delivery if audio_features else None,
+        "emotional_register": scored_register.emotional_register,
+        "register_detail": scored_register.to_dict(),
+        # 2: register began modulating tone_variation/audience_engagement. 3: on qa_enabled
+        # scenarios overall_score/confidence are a blend of the speech and the Q&A rather than
+        # the speech alone. Rows scored earlier stay interpretable rather than looking like drift.
+        "scoring_version": 3,
+        "visual_presence": scored_video.visual_presence,
+        "video": scored_video.to_dict() if video_features else None,
+        # Echoed straight back for the results sparklines. Not scored from — the aggregates
+        # above are the scoring inputs; this is the evidence a reader can look at.
+        "video_timeline": (video_features or {}).get("timeline") if video_features else None,
     }
+
+
+def _resolve_input_mode(
+    audio_features: Optional[AudioFeatures],
+    video_features: Optional[Dict],
+) -> str:
+    """Derived, not stored — the session row records what the user selected at start, but the
+    scorecard should describe what actually arrived.
+
+    "audio_video" rather than "video": the camera is always an add-on to voice, never a mode of
+    its own, so there is no video-only value to return.
+    """
+    if video_features:
+        return "audio_video"
+    return "audio" if audio_features else "text"
 
 
 def _calculate_wpm(text: str, audio_features: Optional[AudioFeatures]) -> Dict:
@@ -665,7 +858,7 @@ def _analyze_voice_clarity(
     }
 
 
-def _calculate_overall_scores(
+def _calculate_overall_scores(  # noqa: PLR0913 — mirrors the analyzer set it composes
     speech_type: str,
     wpm_metrics: Dict,
     filler_analysis: Dict,
@@ -674,6 +867,8 @@ def _calculate_overall_scores(
     clarity_analysis: Dict,
     scored: "session_scorer.ScoredSession",
     speech_config: Dict,
+    topic_relevance: Optional[float] = None,
+    register_voice: Optional[float] = None,
 ) -> Dict:
     fluency = scored.fluency_score
 
@@ -693,6 +888,17 @@ def _calculate_overall_scores(
         tone_score = fluency
     if tone_analysis["monotone_risk"]:
         tone_score -= 20
+
+    # Scenario-conditioned register nudges tone, because raw vocal energy is only half the
+    # judgement — the same energy is right for a motivational talk and wrong for a eulogy.
+    # Only the VOICE channel is allowed in here: it exists in every scored voice session, so it
+    # cannot make two users' headline scores mean different things. The face channel is
+    # deliberately excluded for the same reason visual_presence is (see _generate_scorecard).
+    #
+    # Capped at +/-12 so register adjusts a delivery judgement rather than replacing it.
+    if register_voice is not None:
+        tone_score += max(-12.0, min(12.0, (register_voice - 60.0) * 0.3))
+
     tone_score = max(0.0, min(100.0, tone_score))
 
     structure_score = structure_analysis["structure_score"]
@@ -701,33 +907,45 @@ def _calculate_overall_scores(
     if clarity_score is None:
         clarity_score = fluency
 
+    # The filler term pays out for the ABSENCE of filler words, so a speaker who said
+    # nothing at all collected its full weight: with every other component at 0, an empty
+    # submission scored `0.15 * (100 - 0)` = 15/100. Nothing was said, so nothing was said
+    # fluently — the term only applies once there are words to be disfluent in.
+    filler_component = (100 - filler_penalty) if wpm_metrics.get("word_count", 0) > 0 else 0.0
+
     if speech_config.get("prioritize_energy"):
-        overall = (0.35 * tone_score + 0.25 * structure_score + 
-                   0.2 * pacing_score + 0.1 * clarity_score + 
-                   0.1 * (100 - filler_penalty))
+        overall = (0.35 * tone_score + 0.25 * structure_score +
+                   0.2 * pacing_score + 0.1 * clarity_score +
+                   0.1 * filler_component)
     elif speech_config.get("prioritize_storytelling"):
-        overall = (0.3 * structure_score + 0.25 * tone_score + 
-                   0.2 * pacing_score + 0.15 * clarity_score + 
-                   0.1 * (100 - filler_penalty))
+        overall = (0.3 * structure_score + 0.25 * tone_score +
+                   0.2 * pacing_score + 0.15 * clarity_score +
+                   0.1 * filler_component)
     elif speech_config.get("prioritize_structure"):
-        overall = (0.35 * structure_score + 0.2 * pacing_score + 
-                   0.2 * tone_score + 0.15 * clarity_score + 
-                   0.1 * (100 - filler_penalty))
+        overall = (0.35 * structure_score + 0.2 * pacing_score +
+                   0.2 * tone_score + 0.15 * clarity_score +
+                   0.1 * filler_component)
     elif speech_config.get("disable_corporate_tone"):
-        overall = (0.3 * tone_score + 0.2 * structure_score + 
-                   0.2 * pacing_score + 0.2 * clarity_score + 
-                   0.1 * (100 - filler_penalty))
+        overall = (0.3 * tone_score + 0.2 * structure_score +
+                   0.2 * pacing_score + 0.2 * clarity_score +
+                   0.1 * filler_component)
     else:
-        overall = (0.25 * structure_score + 0.25 * pacing_score + 
-                   0.2 * tone_score + 0.15 * clarity_score + 
-                   0.15 * (100 - filler_penalty))
-    
+        overall = (0.25 * structure_score + 0.25 * pacing_score +
+                   0.2 * tone_score + 0.15 * clarity_score +
+                   0.15 * filler_component)
+
+    # Did the speech address the topic the user chose? `topic_relevance` is None when the
+    # session had no topic or the judge could not run, in which case delivery scores stand
+    # on their own rather than being silently zeroed.
+    if topic_relevance is not None:
+        overall *= relevance.relevance_multiplier(topic_relevance)
+
     audience_engagement = (tone_score + structure_score) / 2
-    
+
     confidence = overall
     if clarity_analysis["issues"]:
         confidence -= 10
-    
+
     return {
         "overall": round(max(0.0, min(100.0, overall)), 1),
         "confidence": round(max(0.0, min(100.0, confidence)), 1),
@@ -842,6 +1060,48 @@ def _generate_feedback_summary(
     return summary, tips[:5]
 
 
+def _interleave(primary: List[str], secondary: List[str]) -> List[str]:
+    """Alternate two lists, keeping order within each and dropping duplicates.
+
+    Used so a camera session's tips do not simply queue up behind the voice ones and fall off
+    the end of the shortlist.
+    """
+    out: List[str] = []
+    seen = set()
+    for pair in zip_longest(primary, secondary):
+        for item in pair:
+            if item and item not in seen:
+                seen.add(item)
+                out.append(item)
+    return out
+
+
+def _append_presence_sentence(summary: str, scored: "video_scorer.ScoredVideo") -> str:
+    """Add one plain sentence about physical delivery to the (deterministic) summary.
+
+    Public Speaking has no LLM grader — this template summary IS the narrative the user reads —
+    so without this the video work would only ever surface as flags and tiles.
+
+    Says nothing when the measurement is not trustworthy enough to state as fact, which is the
+    same bar prompts.build_video_presence_note applies before letting numbers reach an LLM. The
+    results tiles now show their numbers regardless, with the offending metric named — but prose
+    asserting "your presence was strong" carries no such caveat, so it stays gated.
+    """
+    if scored.warnings or scored.visual_presence is None:
+        return summary
+    if scored.confidence_weight < 0.5:
+        return summary
+
+    presence = scored.visual_presence
+    if presence >= 80:
+        note = "Your physical presence was strong — you came across as composed and engaged."
+    elif presence >= 60:
+        note = "Your physical presence was solid, with room to sharpen how you carry yourself."
+    else:
+        note = "Your physical presence held you back; the delivery notes below say where."
+    return f"{summary} {note}"
+
+
 def _is_nonsense_content(text: str) -> bool:
     words = text.split()
     if len(words) < 20:
@@ -883,6 +1143,54 @@ Generate a specific, thoughtful question related to the content. Return only the
         return "Can you elaborate on your main point?"
 
 
+def _blend_qa_into_scorecard(scorecard: Optional[Dict], qa_score: Dict) -> Dict:
+    """Fold the Q&A result into the speech scorecard: 70% delivery, 30% Q&A.
+
+    Only ever called for qa_enabled scenarios, because only those reach qa_phase. The blend
+    rewrites `overall_score` in place rather than adding a parallel headline — a session's one
+    reported number should mean the same thing everywhere it is read, and the pre-blend figure
+    stays available as `speech_only_score`.
+    """
+    merged = dict(scorecard) if isinstance(scorecard, dict) else {}
+    merged["qa_handling"] = qa_score
+
+    composure = qa_score.get("composure")
+    relevance_score = qa_score.get("relevance")
+    # No grader, no blend. _evaluate_qa_response returns None scores when the LLM is unavailable,
+    # and an ungraded answer must not quietly drag a delivered speech down 30%.
+    if composure is None or relevance_score is None:
+        return merged
+
+    base = merged.get("speech_only_score")
+    if base is None:
+        # scoring_version < 3 — those rows predate speech_only_score, and their overall_score has
+        # never been blended, so it IS the speech-only figure.
+        base = merged.get("overall_score")
+    if base is None:
+        return merged
+
+    qa_component = (float(composure) + float(relevance_score)) / 2
+    blended = round((1 - QA_WEIGHT) * float(base) + QA_WEIGHT * qa_component, 1)
+
+    # confidence is derived from overall in _calculate_overall_scores, and the progress dashboard
+    # charts `confidence ?? overall_score`. Shifting it by the same delta is what actually carries
+    # the Q&A off the results page and onto the dashboard.
+    #
+    # It gets its own anchor for the same reason overall_score has one: applying the delta to
+    # whatever confidence currently holds compounds on a second call, so a retried Q&A submission
+    # would walk the number down every attempt while overall_score stayed put.
+    if merged.get("confidence") is not None:
+        base_confidence = float(merged.get("speech_only_confidence", merged["confidence"]))
+        merged["speech_only_confidence"] = base_confidence
+        merged["confidence"] = round(
+            max(0.0, min(100.0, base_confidence + (blended - float(base)))), 1
+        )
+
+    merged["speech_only_score"] = float(base)
+    merged["overall_score"] = blended
+    return merged
+
+
 async def _evaluate_qa_response(
     original_speech: str,
     ai_question: str,
@@ -892,18 +1200,27 @@ async def _evaluate_qa_response(
     if len(user_response.strip()) < 10:
         return {
             "composure": 30.0,
-            "relevance": 20.0,
+            "relevance": 0.0,
+            "scoring_status": relevance.STATUS_SCORED,
             "feedback": "You froze when asked the question. Practice buying time with phrases like 'That's a great question, let me think about that...'",
         }
-    
-    aggressive_indicators = ["wrong", "stupid", "ridiculous", "don't agree", "incorrect"]
-    if any(indicator in user_response.lower() for indicator in aggressive_indicators):
+
+    # A fluent answer to a different question is the exact failure the gate exists for.
+    gate = relevance.evaluate_substance(user_response, ai_question)
+    if gate.rejected:
         return {
-            "composure": 40.0,
-            "relevance": 60.0,
-            "feedback": "Your response sounded defensive. Accept audience questions gracefully, even if you disagree.",
+            "composure": 20.0,
+            "relevance": 0.0,
+            "scoring_status": relevance.STATUS_SCORED,
+            "feedback": "That wasn't an answer to the question. Take a breath and respond to what was actually asked.",
         }
-    
+
+    # Defensiveness caps COMPOSURE, but it no longer short-circuits the whole evaluation
+    # with a hardcoded relevance of 60 — whether the answer addressed the question is a
+    # separate matter from how gracefully it was delivered.
+    aggressive_indicators = ["wrong", "stupid", "ridiculous", "don't agree", "incorrect"]
+    is_defensive = any(i in user_response.lower() for i in aggressive_indicators)
+
     if llm_client.is_configured():
         prompt = f"""Evaluate this Q&A response:
 
@@ -915,30 +1232,41 @@ Rate the response on:
 1. Composure (0-100): Did the speaker remain calm and professional?
 2. Relevance (0-100): Did the response directly address the question?
 
+{prompts.RELEVANCE_SCALE_ANCHORS}
+
 Provide a brief, constructive feedback tip.
 
 Return JSON with keys: composure, relevance, feedback"""
-        
+
         try:
             result = await llm_client.chat_json(
                 [{"role": "user", "content": prompt}],
-                temperature=0.3,
+                temperature=0.0,
                 max_tokens=200,
             )
-            return {
-                "composure": result.get("composure", 70.0),
-                "relevance": result.get("relevance", 70.0),
-                "feedback": result.get("feedback", "Good response."),
-            }
+            composure = relevance._clamp_score(result.get("composure"))
+            rel = relevance._clamp_score(result.get("relevance"))
+            if composure is not None and rel is not None:
+                feedback = result.get("feedback", "Good response.")
+                if is_defensive:
+                    composure = min(composure, 40.0)
+                    feedback = ("Your response sounded defensive. Accept audience questions "
+                                "gracefully, even if you disagree. " + feedback)
+                return {
+                    "composure": composure,
+                    "relevance": rel,
+                    "scoring_status": relevance.STATUS_SCORED,
+                    "feedback": feedback,
+                }
+            logger.warning("Q&A evaluation returned no usable scores: %r", result)
         except Exception as e:
             logger.error(f"Q&A evaluation failed: {e}")
-    
-    words = user_response.split()
-    composure = min(100.0, 50.0 + len(words) * 2)
-    relevance = 75.0
-    
+
+    # No grader, no numbers. This used to return composure = 50 + 2 words (so 25 words of
+    # anything scored 100) and a flat relevance of 75 that nothing had measured.
     return {
-        "composure": round(composure, 1),
-        "relevance": round(relevance, 1),
-        "feedback": "Good effort. Continue practicing impromptu responses to build confidence.",
+        "composure": None,
+        "relevance": None,
+        "scoring_status": relevance.STATUS_UNAVAILABLE,
+        "feedback": "Scoring is temporarily unavailable — your response is saved.",
     }

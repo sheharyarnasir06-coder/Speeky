@@ -3,6 +3,17 @@ Confidence Score calculation and aggregation system.
 
 This module implements the confidence-first scoring philosophy for Speeky,
 prioritizing successful communication over strict grammatical perfection.
+
+STATUS: no service currently imports the engine in this module. `lib/confidence_engine.py`
+is the one the product actually runs on; this is a superset of it (admin-configurable
+weights, a weight-change log, export/import) that was never wired up, plus
+ConfidenceGrammarAnalyzer, which is genuinely distinct and is an optional injection point
+for lib/interview_scenarios/interview_technical.py.
+
+It is kept rather than deleted because of that extra capability, but its scoring bands
+were brought in line with the rest of the codebase: they previously paid out for the
+ABSENCE of problems, so a silent recording scored 50/100 (no pauses +20, no fillers +20,
+rescaled). Anything that gets wired up here must not reintroduce that.
 """
 
 import logging
@@ -564,18 +575,24 @@ class ConfidenceGrammarAnalyzer:
         if not fluency_details:
             return 0.0
 
+        # Nothing was said, so nothing was said confidently. Without this, the pause and
+        # filler components below both pay out full marks for silence — 40/80, rescaled
+        # to 50/100 — which is the same floor lib/session_scorer.py's strict mode removes.
+        speech_rate = fluency_details.get("speech_rate", 0.0)
+        if speech_rate <= 0:
+            return 0.0
+
         raw = 0.0
 
         # Speech rate (40 pts) — identical bands to fluency.py.
-        speech_rate = fluency_details.get("speech_rate", 0.0)
         if 2.0 <= speech_rate <= 4.0:
             raw += 40.0
         elif 1.5 <= speech_rate <= 5.0:
             raw += 30.0
-        elif speech_rate > 0:
+        else:
             raw += 20.0
 
-        # Pause frequency (20 pts) — identical bands to fluency.py.
+        # Pause frequency (20 pts) — identical bands to fluency.py, worst case earns 0.
         pause_count = fluency_details.get("pause_count", 0)
         if pause_count == 0:
             raw += 20.0
@@ -583,10 +600,8 @@ class ConfidenceGrammarAnalyzer:
             raw += 15.0
         elif pause_count <= 5:
             raw += 10.0
-        else:
-            raw += 5.0
 
-        # Filled pauses (20 pts) — identical bands to fluency.py.
+        # Filled pauses (20 pts) — identical bands to fluency.py, worst case earns 0.
         filled_pauses = fluency_details.get("filled_pauses", 0)
         if filled_pauses == 0:
             raw += 20.0
@@ -594,8 +609,6 @@ class ConfidenceGrammarAnalyzer:
             raw += 15.0
         elif filled_pauses <= 3:
             raw += 10.0
-        else:
-            raw += 5.0
 
         # Rescale from /80 (three components) to /100.
         return round(min(100.0, max(0.0, raw / 80.0 * 100.0)), 1)

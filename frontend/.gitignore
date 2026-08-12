@@ -8,10 +8,17 @@ coverage/
 *.log
 .DS_Store
 tsconfig.tsbuildinfo
+/test-build/
 
-# Playwright UI audit: minted QA JWT + run artifacts, never commit
+# Playwright UI audit: minted QA JWT + run artifacts, never commit.
+# Only the secret and the run output — the specs themselves are tracked.
 /e2e/.auth.json
 /test-results/
 /playwright-report/
-/e2e
+
+# MediaPipe runtime assets (~29MB of wasm + .task model bundles). Reproducible from
+# scripts/fetch-mediapipe-assets.mjs, which runs on postinstall — never commit them.
+/public/mediapipe/
+test-build
+tsconfig.test.json
 

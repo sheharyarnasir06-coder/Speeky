@@ -61,6 +61,7 @@ export interface ExploreScenario {
   title: string;
   description: string;
   difficulty: string;
+  showAiAvatar?: boolean;
   featured?: boolean;
   href?: string;
 }
@@ -85,6 +86,7 @@ export const EXPLORE_STATIC_SCENARIOS: ExploreScenario[] = [
     description:
       "Practice speeches and presentations with AI feedback on pacing, tone, and delivery.",
     difficulty: "Intermediate",
+    showAiAvatar: true,
     featured: true,
     href: "/dashboard/public-speaking",
   },

@@ -105,7 +105,14 @@ class SessionFeedback(BaseModel):
     mode: InterviewMode
     closing_message: str
     round_scorecards: List[RoundScorecard]
-    overall_score: int
+    #: None when nothing could be graded — no answers given, or the grader was
+    #: unreachable. A session with no answers used to report 85; clients must render the
+    #: `scoring_status` message instead of a number when this is None.
+    overall_score: Optional[int] = None
+    scoring_status: str = Field(
+        "scored",
+        description="'scored' | 'insufficient_evidence' | 'unavailable'",
+    )
     actionable_script: str
     ended_at: datetime
 

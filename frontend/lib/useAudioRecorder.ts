@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { clearVoiceReady } from "@/lib/voiceReadiness";
 
 export type RecorderState = "idle" | "recording" | "stopping";
 
@@ -50,6 +51,7 @@ export function useAudioRecorder() {
       recorder.start();
       setState("recording");
     } catch {
+      clearVoiceReady();
       setError("Couldn't access the microphone — check your browser permissions.");
     }
   }, [isSupported]);

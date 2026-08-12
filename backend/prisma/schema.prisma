@@ -526,6 +526,12 @@ model BaselineAssessment {
   // "in progress" everywhere else, but get_results_summary uses this flag to retry
   // scoring instead of returning a flat "not completed" 400 forever.
   scoringFailed      Boolean        @default(false)
+  // Whether the numbers on this row are a real grade. "scored" = graded normally;
+  // "unavailable" = the relevance grader could not run, so confidenceScore is null and
+  // the UI must show "not yet graded" rather than a number. Rows written before scoring
+  // integrity was fixed keep the "scored" default even though they were graded under the
+  // old inflated logic — this column distinguishes ungraded from graded, not old from new.
+  scoringStatus      String         @default("scored")
   // PDG-US-10 E-03: distinct from isFlagged/flagReason (integrity checks on the
   // responses themselves) — records when progress_dashboard_service drops an
   // out-of-range (>100 or <0) score from the visual aggregate, for review.
@@ -889,6 +895,10 @@ model PublicSpeakingSession {
   userQaResponse String? // User's Q&A response
   qaScore        Json? // Q&A performance evaluation
   audioFeatures  Json? // AUDIO pipeline signal snapshot (word_timings etc.) — PSC-US-08
+  videoFeatures  Json? // VIDEO pipeline aggregate + per-second timeline, computed by MediaPipe in
+  // the browser. No video, frames, or per-frame landmarks are ever uploaded or stored. Shape is
+  // schemas/video_features_schema.py; the timeline lives under its own "timeline" key so a
+  // retention job can strip it from old rows without touching the aggregates.
   outlierFlags   Json      @default("[]") // PDG-US-10 E-03: out-of-range scorecard scores dropped from dashboard aggregates
   createdAt      DateTime  @default(now())
   completedAt    DateTime?

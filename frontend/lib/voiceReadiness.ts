@@ -7,7 +7,9 @@ export type VoiceReadinessStatus =
   | "unsupported";
 
 const VOICE_READY_CACHE_KEY = "speeky.voiceReadiness.lastPassedAt";
-const VOICE_READY_TTL_MS = 2 * 60 * 1000;
+// Once-per-session, not once-per-click: valid for hours so it survives a whole practice session. Re-checks still happen sooner via clearVoiceReady() when
+// permission is revoked, the input device changes, or a real session's mic fails.
+const VOICE_READY_TTL_MS = 1 * 60 * 60 * 1000;
 const VOICE_READY_EVENT = "speeky:voice-readiness-changed";
 
 function dispatchVoiceReadinessChanged() {
@@ -93,4 +95,10 @@ export async function getVoiceReadinessStatus(): Promise<VoiceReadinessStatus> {
   }
 
   return isVoiceReadyCacheFresh() ? "ready" : "needs_check";
+}
+
+// Switching input device (headset unplugged, Bluetooth mic connected, etc.) can silently
+// break a check that passed on the old device — force a recheck rather than trust a stale pass.
+if (typeof navigator !== "undefined" && navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", clearVoiceReady);
 }

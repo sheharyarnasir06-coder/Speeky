@@ -7,11 +7,15 @@ pipeline and spoken submissions through the AUDIO pipeline (lib/session_scorer),
 enforces the stories' exception handling.
 
 Layering, deliberately:
-  * Pure, DB-free, network-free helpers (precheck / offline_feedback / workplace_confidence
-    / grade_submission) hold all the WEC rules and are unit-tested directly.
+  * Pure, DB-free, network-free helpers (precheck / detect_rule_issues /
+    workplace_confidence / build_result) hold all the WEC rules and are unit-tested
+    directly in tests/test_coaching_scoring.py.
   * grade_submission() calls Groq (lib/llm_client) for the nuanced tone/clarity judgement
-    and falls back to the offline heuristic grader when Groq is unavailable, so the product
-    degrades gracefully and the suite runs offline.
+    and returns None when Groq is unavailable. There is deliberately NO offline scoring
+    fallback: the previous one started at tone=88 / clarity=82 / effectiveness=82 and
+    subtracted per flag, so twenty words of "asdf" scored 82.6 and told the user their
+    communication was "clear and professional". Rule-based flag detection still runs
+    offline — it detects things it can actually see — but numbers require a real grader.
   * The FastAPI controllers at the bottom are thin: gate access, persist CoachingSession
     rows, and delegate to the helpers.
 """
@@ -25,7 +29,7 @@ from fastapi import Depends, WebSocket
 from fastapi.responses import JSONResponse
 from prisma import Json
 
-from lib import explore_sessions, llm_client, prompts, session_scorer, voice_ws
+from lib import explore_sessions, llm_client, prompts, relevance, session_scorer, voice_ws
 from lib.prisma_client import db
 from lib.session_scorer import AudioFeatures, ScoredSession
 from middlewares.auth_middleware import require_auth, ws_require_auth
@@ -195,19 +199,17 @@ def detect_transitions(text: str) -> List[str]:
     return [p.strip().strip(",") for p in _TRANSITIONS if p in lowered]
 
 
-def offline_feedback(
-    scenario_key: str,
-    prompt: str,
-    submission: str,
-    input_mode: str,
-    delivery: Optional[Dict] = None,
-) -> Dict:
-    """Deterministic grader used when Groq isn't configured/reachable.
+def detect_rule_issues(scenario_key: str, submission: str) -> Dict:
+    """Word-bank issue detection: flags and highlights only, deliberately NO scores.
 
-    Same output shape as the LLM grader (prompts.WORKPLACE_FEEDBACK_PROMPT), driven by the
-    word banks above. Intentionally conservative — it catches the clear-cut WEC exception
-    cases (slang, code-switch, aggression, boilerplate, casual conclusions, missing intro)
-    so behaviour and tests hold without a network.
+    This used to be `offline_feedback`, a full stand-in grader that started at
+    tone=88 / clarity=82 / effectiveness=82 and subtracted per flag. Twenty words of
+    "asdf" therefore scored 82.6 with the summary "Clear, professional communication",
+    and `graded_by` was the only signal that no real grading had happened.
+
+    What it detects is genuine — slang, code-switching, aggression, boilerplate, missing
+    intros — so that survives and still runs on every submission, LLM or not. What it
+    cannot do is judge tone, clarity or effectiveness, so it no longer pretends to.
     """
     text = submission or ""
     lowered = f" {text.lower()} "
@@ -265,47 +267,14 @@ def offline_feedback(
     # highlights: transitions + a little expected vocab
     highlights = [{"kind": "transition", "phrase": t} for t in detect_transitions(text)]
 
-    # heuristic scores — start high, subtract per flag severity; tone is the headline.
-    tone = 88.0
-    clarity = 82.0
-    effectiveness = 82.0
-    severity = {"slang": 12, "code_switch": 12, "aggressive_tone": 22, "over_promising": 14,
-                "boilerplate": 16, "missing_intro": 12, "casual_conclusion": 10,
-                "missing_context": 15, "non_english": 20}
-    for f in flags:
-        s = severity.get(f["type"], 6)
-        tone -= s
-        clarity -= s * 0.5
-        effectiveness -= s * 0.6
-
-    # short/empty submissions can't be very effective
-    wc = len(text.split())
-    if wc < 15:
-        effectiveness -= 10
-        clarity -= 8
-
-    tone = max(0.0, min(100.0, tone))
-    clarity = max(0.0, min(100.0, clarity))
-    effectiveness = max(0.0, min(100.0, effectiveness))
-
-    met_objective = wc >= 15 and not any(f["type"] in ("missing_context", "non_english") for f in flags)
-
-    return {
-        "professional_tone": round(tone),
-        "clarity": round(clarity),
-        "effectiveness": round(effectiveness),
-        "met_objective": met_objective,
-        "flags": flags,
-        "highlights": highlights,
-        "polished_version": text,
-        "summary": _offline_summary(flags, tone),
-        "_source": "offline",
-    }
+    return {"flags": flags, "highlights": highlights}
 
 
-def _offline_summary(flags: List[Dict], tone: float) -> str:
+def _offline_summary(flags: List[Dict]) -> str:
+    """Coaching prose for the rule-detected issues. Runs even when no score exists — a
+    user whose grader is down should still learn that they wrote "thx bro"."""
     if not flags:
-        return "Clear, professional communication. Tone and clarity are on point — keep it up."
+        return ""
     kinds = {f["type"] for f in flags}
     bits = []
     if "aggressive_tone" in kinds:
@@ -326,13 +295,25 @@ def _offline_summary(flags: List[Dict], tone: float) -> str:
     return f"Good effort. To sound more professional: {focus}."
 
 
-def _normalize_llm_feedback(raw: Dict) -> Dict:
-    """Coerce the LLM's JSON into the canonical grader shape, dropping unknown flag types."""
-    def clamp(v, d=0.0):
+def _normalize_llm_feedback(raw: Dict) -> Optional[Dict]:
+    """Coerce the LLM's JSON into the canonical grader shape, dropping unknown flag types.
+
+    Returns None if any headline metric is missing or unparseable. Previously those
+    coerced to 0.0 while `met_objective` defaulted to True — a response the model
+    half-produced became a real-looking grade of 0/0/0 with the objective met.
+    """
+    def clamp(v):
         try:
             return max(0.0, min(100.0, float(v)))
         except (TypeError, ValueError):
-            return d
+            return None
+
+    tone = clamp(raw.get("professional_tone"))
+    clarity = clamp(raw.get("clarity"))
+    effectiveness = clamp(raw.get("effectiveness"))
+    if tone is None or clarity is None or effectiveness is None:
+        logger.warning("Grader response missing headline metrics: %r", raw)
+        return None
 
     flags = []
     for f in raw.get("flags") or []:
@@ -349,10 +330,11 @@ def _normalize_llm_feedback(raw: Dict) -> Dict:
         if isinstance(h, dict) and h.get("kind") in prompts.HIGHLIGHT_KINDS
     ]
     return {
-        "professional_tone": clamp(raw.get("professional_tone")),
-        "clarity": clamp(raw.get("clarity")),
-        "effectiveness": clamp(raw.get("effectiveness")),
-        "met_objective": bool(raw.get("met_objective", True)),
+        "professional_tone": tone,
+        "clarity": clarity,
+        "effectiveness": effectiveness,
+        # Fail low, not high: an omitted verdict is not a passing one.
+        "met_objective": bool(raw.get("met_objective", False)),
         "flags": flags,
         "highlights": highlights,
         "polished_version": raw.get("polished_version", ""),
@@ -368,10 +350,15 @@ async def grade_submission(
     input_mode: str,
     delivery: Optional[Dict] = None,
 ) -> Dict:
-    """Grade tone/clarity/effectiveness via Groq, falling back to the offline heuristic."""
+    """Grade tone/clarity/effectiveness via Groq. Returns None when grading is impossible.
+
+    None is the whole point: there is no longer an offline scoring fallback, because a
+    heuristic that starts at 88 and calls itself a grade is worse than no grade at all.
+    Rule-based flag detection still runs in `submit_session` either way.
+    """
     scen = scenario_meta(scenario_key) or {"label": scenario_key}
     if not llm_client.is_configured():
-        return offline_feedback(scenario_key, prompt, submission, input_mode, delivery)
+        return None
 
     grader_prompt = prompts.build_workplace_feedback_prompt(
         scenario_label=scen["label"],
@@ -388,8 +375,8 @@ async def grade_submission(
         )
         return _normalize_llm_feedback(raw)
     except llm_client.LLMError as e:
-        logger.warning("Groq grading failed (%s); using offline grader", e)
-        return offline_feedback(scenario_key, prompt, submission, input_mode, delivery)
+        logger.warning("Groq grading failed (%s); submission will be reported ungraded", e)
+        return None
 
 
 # ── Workplace confidence (headline, grammar-independent) ─────────────────────
@@ -407,6 +394,12 @@ def workplace_confidence(grader: Dict, scored: ScoredSession, flags: List[Dict])
     Professional tone is the dominant term. Delivery (fluency/pronunciation) only
     contributes on the AUDIO pipeline; the TEXT pipeline leans on written fluency instead.
     Exception flags apply bounded penalties.
+
+    NOTE on flag ordering: `flags` must already have code-switch false positives stripped
+    (code_switch_service.track_from_flags). This used to be computed first and filtered
+    afterwards, so a submission mentioning "Lahore" kept a 6-point penalty for a flag that
+    was then removed from the response — the persisted score and the persisted flags
+    disagreed with each other.
     """
     tone = grader.get("professional_tone", 0.0)
     clarity = grader.get("clarity", 0.0)
@@ -415,48 +408,124 @@ def workplace_confidence(grader: Dict, scored: ScoredSession, flags: List[Dict])
     if scored.is_text_only:
         base = 0.45 * tone + 0.25 * clarity + 0.15 * effectiveness + 0.15 * scored.fluency_score
     else:
-        base = (0.35 * tone + 0.20 * clarity + 0.15 * effectiveness
-                + 0.15 * scored.fluency_score + 0.15 * (scored.pronunciation_score or 0.0))
+        # Pronunciation is None when there was no delivery signal to measure. Treating
+        # that as 0 charged the user 15 points for a measurement that never happened, so
+        # the remaining weights are renormalized instead — the same choice
+        # confidence_engine makes for a text-only session.
+        pronunciation = scored.pronunciation_score
+        if pronunciation is None:
+            base = ((0.35 * tone + 0.20 * clarity + 0.15 * effectiveness
+                     + 0.15 * scored.fluency_score) / 0.85)
+        else:
+            base = (0.35 * tone + 0.20 * clarity + 0.15 * effectiveness
+                    + 0.15 * scored.fluency_score + 0.15 * pronunciation)
 
     penalty = sum(_FLAG_PENALTY.get(f.get("type"), 0) for f in flags)
     return round(max(0.0, min(100.0, base - penalty)), 2)
 
 
+def merge_flags(rule_flags: List[Dict], grader: Optional[Dict], rule_issues: Dict) -> List[Dict]:
+    """All flags for this submission: precheck rules, word-bank detection, LLM findings.
+
+    Word-bank detection runs whether or not the LLM did, so an ungraded submission still
+    surfaces its slang and code-switching. Duplicates are collapsed on (type, phrase)
+    because the two detectors legitimately overlap.
+    """
+    merged: List[Dict] = list(rule_flags)
+    seen = {(f.get("type"), f.get("phrase", "")) for f in merged}
+    for f in list(rule_issues.get("flags", [])) + list((grader or {}).get("flags", [])):
+        key = (f.get("type"), f.get("phrase", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "type": f["type"], "phrase": f.get("phrase", ""),
+            "message": f.get("explanation", ""), "suggestion": f.get("suggestion", ""),
+        })
+    return merged
+
+
 def build_result(
     scenario_key: str,
     input_mode: str,
-    grader: Dict,
+    grader: Optional[Dict],
     scored: ScoredSession,
-    rule_flags: List[Dict],
+    all_flags: List[Dict],
+    rule_issues: Dict,
+    judgement: Optional[relevance.RelevanceResult] = None,
 ) -> Dict:
-    """Merge grader output + scorer output + rule flags into the final graded payload."""
-    # Presentation slide-pause tolerance (WEC-US-12 E-03) already handled at scoring time.
-    all_flags = list(rule_flags) + [
-        {"type": f["type"], "phrase": f.get("phrase", ""),
-         "message": f.get("explanation", ""), "suggestion": f.get("suggestion", "")}
-        for f in grader.get("flags", [])
-    ]
-    confidence = workplace_confidence(grader, scored, all_flags)
+    """Merge grader output + scorer output + flags into the final payload.
+
+    `all_flags` must already be filtered for code-switch false positives — see the note on
+    workplace_confidence. `grader` is None when grading was impossible, in which case no
+    number is produced at all.
+    """
+    highlights = list(rule_issues.get("highlights", [])) + list((grader or {}).get("highlights", []))
+
+    if grader is None:
+        return {
+            "input_mode": input_mode,
+            "scoring_status": relevance.STATUS_UNAVAILABLE,
+            "scores": {
+                "professional_tone": None, "clarity": None, "effectiveness": None,
+                "fluency": None, "vocabulary": None, "pronunciation": None,
+                "confidence": None,
+            },
+            "headline_metric": "professional_tone",
+            "met_objective": None,
+            "flags": all_flags,
+            "highlights": highlights,
+            "polished_version": "",
+            "summary": _offline_summary(all_flags) or
+                       "Scoring is temporarily unavailable — your submission is saved.",
+            "delivery": scored.delivery,
+            "graded_by": relevance.SOURCE_UNAVAILABLE,
+            "relevance": judgement.to_dict() if judgement else None,
+        }
+
+    # Relevance scales everything: a polished message that ignores the scenario is not a
+    # good submission, however well written it is.
+    rel = judgement.relevance if judgement else None
+    tone = relevance.apply(grader["professional_tone"], rel)
+    clarity = relevance.apply(grader["clarity"], rel)
+    effectiveness = relevance.apply(grader["effectiveness"], rel)
+    scaled = {
+        "professional_tone": tone,
+        "clarity": clarity,
+        "effectiveness": effectiveness,
+    }
+    scaled_scored = ScoredSession(
+        fluency_score=relevance.apply(scored.fluency_score, rel) or 0.0,
+        vocabulary_score=relevance.apply(scored.vocabulary_score, rel) or 0.0,
+        pronunciation_score=relevance.apply(scored.pronunciation_score, rel),
+        is_text_only=scored.is_text_only,
+        delivery=scored.delivery,
+    )
+    confidence = workplace_confidence(scaled, scaled_scored, all_flags)
 
     return {
         "input_mode": input_mode,
+        "scoring_status": relevance.STATUS_SCORED,
         "scores": {
-            "professional_tone": grader.get("professional_tone"),
-            "clarity": grader.get("clarity"),
-            "effectiveness": grader.get("effectiveness"),
-            "fluency": scored.fluency_score,
-            "vocabulary": scored.vocabulary_score,
-            "pronunciation": scored.pronunciation_score,
+            "professional_tone": tone,
+            "clarity": clarity,
+            "effectiveness": effectiveness,
+            "fluency": scaled_scored.fluency_score,
+            "vocabulary": scaled_scored.vocabulary_score,
+            "pronunciation": scaled_scored.pronunciation_score,
             "confidence": confidence,
         },
         "headline_metric": "professional_tone",
-        "met_objective": grader.get("met_objective"),
+        # An off-topic submission cannot have met the scenario's objective, whatever the
+        # grader said about the prose.
+        "met_objective": bool(grader.get("met_objective")) and (rel is None or rel >= 50),
         "flags": all_flags,
-        "highlights": grader.get("highlights", []),
+        "highlights": highlights,
         "polished_version": grader.get("polished_version", ""),
         "summary": grader.get("summary", ""),
         "delivery": scored.delivery,
         "graded_by": grader.get("_source", "llm"),
+        "relevance": judgement.to_dict() if judgement else None,
     }
 
 
@@ -474,12 +543,15 @@ def _adjust_presentation_pauses(audio: AudioFeatures) -> AudioFeatures:
 
 def score_submission(scenario_key: str, input_mode: str, submission: str,
                      audio: Optional[AudioFeatures]) -> ScoredSession:
-    if input_mode == "audio":
-        assert audio is not None
+    """Strict scoring: no floors, so a submission that demonstrates nothing scores nothing."""
+    if input_mode == "audio" and audio is not None:
         if scenario_key == "presentation_prep":
             audio = _adjust_presentation_pauses(audio)
-        return session_scorer.score_audio_session(audio)
-    return session_scorer.score_text_session(submission)
+        return session_scorer.score_audio_session(audio, strict=True)
+    # Audio mode with no features falls through to text scoring of the transcript rather
+    # than raising. This was `assert audio is not None`, which turned a malformed client
+    # request into a 500.
+    return session_scorer.score_text_session(submission, strict=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -602,20 +674,32 @@ async def submit_session(session_id: str, payload: SubmitCoachingSchema,
     # 2) Score via the correct pipeline (TEXT vs AUDIO).
     scored = score_submission(scenario_key, input_mode, submission, audio)
 
-    # 3) Grade tone/clarity/effectiveness (LLM or offline).
-    grader = await grade_submission(
-        scenario_key, session.promptText, submission, input_mode, scored.delivery
+    # 3) Did the submission actually address the scenario prompt? Nothing used to ask.
+    judgement = await relevance.assess(
+        session.promptText, submission,
+        context=f"workplace communication practice, {scenario_key.replace('_', ' ')} scenario",
     )
 
-    result = build_result(scenario_key, input_mode, grader, scored, rule_flags)
+    # 4) Word-bank issue detection always runs; LLM grading may be unavailable.
+    rule_issues = detect_rule_issues(scenario_key, submission)
+    grader = None
+    if judgement.graded:
+        grader = await grade_submission(
+            scenario_key, session.promptText, submission, input_mode, scored.delivery
+        )
 
-    # CSC-US-01: drop proper-noun false positives (E-01) from the code_switch flags and
-    # log the genuine code-switched words into the learner's practice list (TC-003). Done
-    # before the flags are persisted/returned so "Lahore" is never shown as a violation.
+    # 5) CSC-US-01: drop proper-noun false positives (E-01) from the code_switch flags and
+    # log the genuine code-switched words into the learner's practice list (TC-003). This
+    # runs BEFORE scoring so the confidence penalty and the returned flags agree — it used
+    # to run after build_result, leaving a 6-point penalty for a flag that was then removed.
     from services import code_switch_service
 
-    result["flags"] = await code_switch_service.track_from_flags(
-        user_id, result["flags"], submission
+    all_flags = await code_switch_service.track_from_flags(
+        user_id, merge_flags(rule_flags, grader, rule_issues), submission
+    )
+
+    result = build_result(
+        scenario_key, input_mode, grader, scored, all_flags, rule_issues, judgement
     )
 
     status = CoachingStatus.COMPLETED

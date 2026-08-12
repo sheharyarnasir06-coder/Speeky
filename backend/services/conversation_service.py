@@ -46,6 +46,7 @@ from lib import (
     llm_client,
     pii,
     prompts,
+    relevance,
     session_scorer,
     tts_client,
     voice_ws,
@@ -425,7 +426,7 @@ async def _send_message(user_id: str, session_id: str, req: SendMessageSchema) -
 
     # US-152: Silently detect code-switched words and log to the personal word list.
     # Runs after the reply is already saved — never blocks the user-facing response.
-    if not session_ended and llm_client.is_configured():
+    if not session_ended:
         try:
             detector = TextCodeSwitchDetector()
             detection = await detector.detect(text)
@@ -502,9 +503,33 @@ async def _end_session(user_id: str, session_id: str) -> Dict:
                           word_timings=t.get("word_timings", []))
             for t in user_turns
         ]
-        scored = session_scorer.score_audio_session(session_scorer.aggregate_audio_turns(per_turn))
+        scored = session_scorer.score_audio_session(
+            session_scorer.aggregate_audio_turns(per_turn), strict=True
+        )
     else:
-        scored = session_scorer.score_text_session(full_text)
+        scored = session_scorer.score_text_session(full_text, strict=True)
+
+    # Did the learner actually converse about the topic they picked? The session's topic
+    # was never compared with anything they said, so a session spent ignoring it scored
+    # identically to one spent on it. `_looks_like_gibberish` caught only crude patterns
+    # and, on a strike-out, still let the session be scored on the way through.
+    judgement = await relevance.assess(
+        _topic_label(session), full_text,
+        context="an open-ended English conversation-practice session on this topic",
+    )
+    # Delivery fluency/vocabulary are measured from the turns themselves and remain a real
+    # score without the LLM, so this stays "scored" — unlike the baseline assessment, where
+    # the judgement IS the score. An ungraded topic check just leaves the scores unscaled
+    # and `topic_relevance` null, which is the narrower and more honest claim.
+    scoring_status = relevance.STATUS_SCORED
+    if judgement.graded:
+        scored = session_scorer.ScoredSession(
+            fluency_score=relevance.apply(scored.fluency_score, judgement.relevance) or 0.0,
+            vocabulary_score=relevance.apply(scored.vocabulary_score, judgement.relevance) or 0.0,
+            pronunciation_score=relevance.apply(scored.pronunciation_score, judgement.relevance),
+            is_text_only=scored.is_text_only,
+            delivery=scored.delivery,
+        )
 
     duration = (_now() - session["started_at"]).total_seconds()
     session["status"] = "completed"
@@ -547,6 +572,8 @@ async def _end_session(user_id: str, session_id: str) -> Dict:
 
     return {
         "session_id": session_id, "status": session["status"], "duration_seconds": duration,
+        "scoring_status": scoring_status,
+        "topic_relevance": judgement.relevance,
         "fluency_score": scored.fluency_score, "vocabulary_score": scored.vocabulary_score,
         "pronunciation_score": scored.pronunciation_score, "level": session["level"],
         "new_memory_facts": new_facts,

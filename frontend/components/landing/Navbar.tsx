@@ -45,12 +45,12 @@ export function Navbar() {
       <div className="container flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center" aria-label="Speeky home">
           <Image
-            src="/logo-full.png"
+            src="/speeky-consolidated-logo.png"
             alt="Speeky"
-            width={142}
-            height={159}
+            width={277}
+            height={100}
             priority
-            className="h-10 w-auto transition-all dark:brightness-0 dark:invert"
+            className="speeky-logo-heartbeat h-12 w-auto transition-all dark:brightness-0 dark:invert"
           />
         </Link>
 

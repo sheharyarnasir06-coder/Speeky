@@ -5,7 +5,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft } from "lucide-react";
 import { LegalModal } from "@/components/common/LegalModal";
-import { VoiceWave } from "@/components/common/VoiceWave";
 import { TESTIMONIALS } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
@@ -70,37 +69,45 @@ export function AuthShell({
   );
 
   return (
-    <div className="relative flex min-h-screen animate-fade-up flex-col overflow-hidden bg-background lg:flex-row">
-      <Link
-        href="/"
-        // opacity-60 on already-muted text measured 2.24:1 (light) / 3.06:1 (dark) —
-        // well under AA. Full-strength muted text with a hover shift to foreground
-        // keeps the same recessive feel while staying legible.
-        className="absolute left-5 top-5 z-20 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur transition-colors duration-fast hover:text-foreground"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-        Back to home
-      </Link>
-
-      <div className="relative hidden flex-col overflow-hidden border-r border-border bg-surface px-12 py-10 lg:flex lg:w-1/2">
+    <div className="relative flex min-h-screen animate-fade-up flex-col items-center justify-center overflow-hidden bg-background px-4 py-3 sm:py-6 lg:flex-row lg:px-8">
+      <div className="relative grid w-full max-w-[88rem] overflow-hidden rounded-[1.75rem] border border-border bg-surface-elevated shadow-[0_24px_80px_hsl(var(--foreground)/0.10)] lg:grid-cols-[1.08fr_0.92fr]">
+        <Link
+          href="/"
+          className="absolute left-5 top-5 z-30 inline-flex items-center gap-2 rounded-full border border-border bg-surface/75 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur transition-colors duration-fast hover:text-foreground"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+          Back to home
+        </Link>
+        <div className="relative hidden min-h-[40rem] flex-col overflow-hidden border-r border-border bg-surface px-12 py-8 lg:flex">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute left-[-8rem] top-10 h-72 w-72 rounded-full bg-primary/10 blur-3xl dark:bg-accent/10"
+          className="pointer-events-none absolute left-[-6.5rem] top-14 h-56 w-56 rounded-br-[6rem] rounded-tr-[6rem] bg-accent/8 dark:hidden"
         />
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute bottom-[-10rem] right-[-10rem] h-96 w-96 rounded-full bg-accent/10 blur-3xl dark:bg-primary/10"
+          className="pointer-events-none absolute bottom-[-4rem] left-[-3rem] h-40 w-40 rounded-full bg-danger/55 blur-[1px] dark:hidden"
         />
-        <VoiceWave compact className="bottom-24 opacity-35 dark:opacity-45" />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-[-3.5rem] right-[-3rem] h-44 w-44 rounded-full bg-primary/22 blur-[1px] dark:bg-primary/14"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-24 top-24 h-20 w-20 rounded-full bg-secondary/70 blur-2xl dark:hidden"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-24 bottom-28 h-24 w-24 rounded-full bg-primary/10 blur-2xl dark:hidden"
+        />
 
-        <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-10 text-center">
+        <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-8 pt-8 text-center">
           <Link href="/" className="inline-flex items-center">
             <Image
-              src="/logo-full.png"
+              src="/speeky-consolidated-logo.png"
               alt="Speeky"
-              width={213}
-              height={239}
-              className="h-24 w-auto dark:brightness-0 dark:invert"
+              width={277}
+              height={100}
+              className="speeky-logo-heartbeat h-24 w-auto dark:brightness-0 dark:invert"
               priority
             />
           </Link>
@@ -111,7 +118,7 @@ export function AuthShell({
               fade ? "opacity-100" : "opacity-0",
             )}
           >
-            <p className="font-serif text-3xl leading-snug text-foreground">
+            <p className="font-serif text-2xl leading-snug text-foreground xl:text-3xl">
               &ldquo;{currentQuote.quote}&rdquo;
             </p>
             <p className="text-sm text-muted-foreground">
@@ -125,19 +132,32 @@ export function AuthShell({
         </p>
       </div>
 
-      <div className="relative flex w-full flex-1 flex-col justify-center px-6 py-20 sm:px-12 lg:w-1/2 lg:px-16">
+      <div className="relative flex min-h-[40rem] w-full flex-col justify-center overflow-hidden bg-surface-elevated px-6 py-10 sm:px-12 lg:px-14">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute right-[-8rem] top-[-8rem] h-72 w-72 rounded-full bg-secondary blur-3xl dark:bg-accent/10"
+          className="pointer-events-none absolute right-[-8rem] top-[-8rem] h-72 w-72 rounded-full bg-secondary blur-3xl dark:hidden"
         />
-        <div className="relative mx-auto flex w-full max-w-sm flex-col gap-8">
-          {/* Below `lg` the two-column split has no room, so instead of just
-              hiding the branding panel (a blank first impression on the
-              devices most of this audience actually signs up on — see
-              planning notes on the Pakistan/South Asia mobile-first market)
-              this is a compact standalone band: same glow + voice-wave + one
-              rotating testimonial line, sized for a phone instead of half a
-              desktop viewport. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-[-6rem] bottom-[-6rem] h-56 w-56 rounded-full bg-primary/12 blur-3xl dark:hidden"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-10 top-24 h-20 w-20 rounded-full bg-danger/10 blur-2xl dark:hidden"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-[-7rem] top-[-7rem] hidden h-72 w-72 rounded-full bg-primary/10 blur-3xl dark:block"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-8 top-8 hidden items-center gap-2 lg:flex"
+        >
+          <span className="h-2 w-2 rounded-full bg-primary/45" />
+          <span className="h-2 w-2 rounded-full bg-accent/45" />
+          <span className="h-2 w-2 rounded-full bg-danger/45" />
+        </div>
+        <div className="relative mx-auto flex w-full max-w-sm flex-col gap-6">
           <div className="relative -mx-2 flex flex-col items-center gap-3 overflow-hidden rounded-2xl border border-border bg-surface px-5 pb-5 pt-6 text-center lg:hidden">
             <div
               aria-hidden="true"
@@ -147,15 +167,13 @@ export function AuthShell({
               aria-hidden="true"
               className="pointer-events-none absolute bottom-[-3.5rem] right-[-3rem] h-40 w-40 rounded-full bg-accent/15 blur-2xl dark:bg-primary/15"
             />
-            <VoiceWave compact className="bottom-0 h-16 opacity-30 dark:opacity-40" />
-
             <Link href="/" className="relative inline-flex items-center">
               <Image
-                src="/logo-full.png"
+                src="/speeky-consolidated-logo.png"
                 alt="Speeky"
-                width={142}
-                height={159}
-                className="h-9 w-auto dark:brightness-0 dark:invert"
+                width={277}
+                height={100}
+                className="speeky-logo-heartbeat h-11 w-auto dark:brightness-0 dark:invert"
                 priority
               />
             </Link>
@@ -191,6 +209,7 @@ export function AuthShell({
             {legalNote ?? defaultLegalNote}
           </div>
         </div>
+      </div>
       </div>
 
       <LegalModal type={legalType} open={legalType !== null} onClose={() => setLegalType(null)} />

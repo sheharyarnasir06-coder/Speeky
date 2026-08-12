@@ -445,6 +445,12 @@ Also identify positive highlights to reinforce (use ONLY these kinds):
 - "expected_vocab": correct client-service / professional vocabulary the user used well.
 - "transition": presentation/meeting transition phrasing (e.g. "Moving on to the next slide").
 
+{anchors}
+
+These bands apply to professional_tone, clarity and effectiveness alike. A submission
+that ignores the scenario's objective cannot score above 30 on effectiveness no matter
+how polished its wording is.
+
 Respond ONLY with a JSON object, no prose, in exactly this shape:
 {{
   "professional_tone": <0-100 integer>,
@@ -492,7 +498,185 @@ def build_workplace_feedback_prompt(
         submission=submission,
         input_mode=mode_label,
         delivery_note=delivery_note,
+        anchors=RELEVANCE_SCALE_ANCHORS,
     )
+
+
+# --- Answer relevance / substance judging ---------------------------------
+# Used by lib/relevance.py, which every scored module routes through so an answer is
+# graded on whether it actually addressed the prompt — not on fluency alone.
+#
+# The anchor block below exists because an unanchored "<0-100 integer>" instruction
+# (see WORKPLACE_FEEDBACK_PROMPT above) reliably pulls an LLM toward 70-85 for almost
+# any input, including gibberish. Naming what each band *means*, and stating the
+# below-10 rule explicitly, is what makes a nonsense answer score like a nonsense answer.
+RELEVANCE_SCALE_ANCHORS = """Score bands — use the whole range, these are not suggestions:
+  0-10   : empty, unintelligible, or entirely unrelated to the question.
+  11-30  : acknowledges the topic but answers nothing that was actually asked.
+  31-50  : partially addresses the question; mostly generic filler.
+  51-70  : addresses the question with some specifics.
+  71-85  : directly and completely addresses the question with concrete detail.
+  86-100 : addresses the question with specific, well-structured, compelling detail.
+
+Hard rules:
+- If the answer is nonsense, random characters, or repeated words, score below 10.
+- If the answer is about a different subject than the question, score below 10 no
+  matter how fluent or well-formed it is.
+- If the answer is a bare non-answer ("nothing", "I don't know", "n/a"), score below 10.
+- Never award partial credit for fluency, politeness, or length alone."""
+
+ANSWER_RELEVANCE_PROMPT = """You are a strict assessment grader. Judge ONE answer against the
+question it was given. You are NOT a coach here — do not be encouraging, do not give the
+benefit of the doubt.
+
+Question asked:
+\"\"\"
+{question}
+\"\"\"
+{context_note}
+The person's answer:
+\"\"\"
+{answer}
+\"\"\"
+
+Judge two things independently:
+- relevance: did this answer address THIS question?
+- substance: is there real, specific content here, regardless of topic?
+
+{anchors}
+
+Respond ONLY with a JSON object, no prose, in exactly this shape:
+{{
+  "on_topic": <true|false>,
+  "relevance": <0-100 integer>,
+  "substance": <0-100 integer>,
+  "reason": "<one short sentence, max 20 words, naming the deciding factor>"
+}}
+"""
+
+INTERVIEW_ANSWER_GRADING_PROMPT = """You are a strict interview assessor grading a candidate's
+answers. You are NOT a coach here — do not be encouraging, do not give the benefit of the doubt.
+
+Interview context: {context}
+
+Transcript ({answer_count} answered questions, numbered in order):
+\"\"\"
+{transcript}
+\"\"\"
+
+Grade EVERY answer separately. For each, judge:
+- relevance: did the answer address the question that was actually asked?
+- structure: is it organised (e.g. situation - action - result), or a shapeless ramble?
+- specificity: concrete examples, numbers, named outcomes — or vague generalities?
+- substance: is there real content at all, regardless of topic?
+
+{anchors}
+
+The same bands apply to structure and specificity. An answer with no discernible structure
+scores below 10 on structure; an answer with no concrete detail scores below 10 on specificity.
+
+Respond ONLY with a JSON object, no prose, in exactly this shape:
+{{
+  "answers": [
+    {{
+      "index": <0-based position of the answer in the transcript>,
+      "relevance": <0-100 integer>,
+      "structure": <0-100 integer>,
+      "specificity": <0-100 integer>,
+      "substance": <0-100 integer>,
+      "reason": "<one short sentence, max 20 words>"
+    }}
+  ]
+}}
+Return exactly {answer_count} entries, one per answered question, in order.
+"""
+
+
+def build_answer_relevance_prompt(
+    question: str,
+    answer: str,
+    context: Optional[str] = None,
+) -> str:
+    """Grade a single answer against the question it was asked.
+
+    context: optional scenario framing (e.g. "baseline English assessment, fluency
+    question") so the judge knows what kind of answer is expected.
+    """
+    context_note = f"\nContext for the question: {context}\n" if context else ""
+    return ANSWER_RELEVANCE_PROMPT.format(
+        question=question,
+        answer=answer,
+        context_note=context_note,
+        anchors=RELEVANCE_SCALE_ANCHORS,
+    )
+
+
+def build_interview_answer_grading_prompt(
+    transcript: str,
+    answer_count: int,
+    context: str,
+) -> str:
+    """Grade a whole interview transcript in one call — one request per session, not per turn."""
+    return INTERVIEW_ANSWER_GRADING_PROMPT.format(
+        transcript=transcript,
+        answer_count=answer_count,
+        context=context,
+        anchors=RELEVANCE_SCALE_ANCHORS,
+    )
+
+
+def build_video_presence_note(
+    video: Optional[Dict],
+    confidence_weight: float = 0.0,
+) -> str:
+    """Physical-delivery metrics for camera sessions — the video sibling of `delivery_note`.
+
+    Returns "" whenever the measurement should not reach the model at all. That bar is set
+    deliberately high: handed "eye contact 12%", an LLM will coach the user about it confidently
+    and specifically no matter how the number is hedged in surrounding text. A hedge in the
+    prompt does not survive into the output, so anything we would need to hedge is withheld.
+
+    Withheld when:
+      - there is no video, or the session was not scorable (`status != "ok"`);
+      - `confidence_weight < 0.5`, which covers every uncalibrated session, every heavily
+        degraded one, and anything under ~30s;
+      - the individual metric is None (never printed as "None").
+
+    Used by the Interview Coach's LLM grader. Public Speaking has no LLM grader — its narrative
+    is the deterministic `_generate_feedback_summary` — so this is not called on that path.
+    """
+    if not video or confidence_weight < 0.5:
+        return ""
+
+    detail = video.get("detail") or {}
+    if detail.get("status") != "ok":
+        return ""
+
+    parts: List[str] = []
+
+    def add(value, template: str):
+        if value is not None:
+            parts.append(template.format(value))
+
+    add(video.get("eye_contact"), "eye contact {:.0f}/100")
+    add(video.get("posture"), "posture {:.0f}/100")
+    add(video.get("gestures"), "gesture use {:.0f}/100")
+    add(video.get("expression"), "facial expressiveness {:.0f}/100")
+
+    if not parts:
+        return ""
+
+    note = "\nPhysical delivery (measured in-browser from the user's camera): " + ", ".join(parts) + "."
+
+    # An uncalibrated baseline means the gaze figure carries an unmodelled camera offset. It is
+    # still directionally useful, but the exact number must not be quoted back at the user.
+    if not detail.get("calibrated"):
+        note += " Gaze was not calibrated, so treat eye contact as approximate and do not quote the exact figure."
+
+    # Without this the model reliably invents specifics — "your gestures were open and
+    # welcoming" — that nothing in the data supports.
+    note += " Weave this into your feedback on presence. Do not invent visual details beyond these numbers.\n"
+    return note
 
 
 # Lightweight language check (WEC-US-10 E-04 / education rule): is the text English?

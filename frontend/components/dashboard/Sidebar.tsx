@@ -56,7 +56,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         "relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
         expanded ? "justify-start" : "justify-center lg:justify-start",
         active
-          ? "bg-primary text-primary-foreground"
+          ? "bg-gradient-to-r from-primary to-primary/80 text-primary-foreground shadow-[0_10px_28px_hsl(var(--primary)/0.22)]"
           : "text-muted-foreground hover:bg-surface hover:text-foreground",
       );
     const labelClass = expanded ? "inline" : "hidden lg:inline";
@@ -189,23 +189,17 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     <>
       {/* Desktop / tablet rail — icon-only below `lg`, labeled at `lg+`. Hidden
           entirely below that, replaced by the drawer below. */}
-      <aside className="hidden w-[4.5rem] shrink-0 flex-col items-center border-r border-border bg-surface-elevated px-2 py-6 lg:flex lg:w-64 lg:items-stretch lg:px-4">
+      <aside key={pathname} className="hidden w-[4.5rem] shrink-0 flex-col items-center border-r border-border bg-[linear-gradient(180deg,hsl(var(--surface-elevated)),hsl(var(--surface))),radial-gradient(90%_28%_at_0%_0%,hsl(var(--primary)/0.12),transparent_60%),radial-gradient(70%_24%_at_100%_100%,hsl(var(--accent)/0.08),transparent_60%)] px-2 py-6 lg:flex lg:w-64 lg:items-stretch lg:px-4 animate-scale-in">
         <div className="flex flex-col items-center px-2 lg:items-start">
           <Link href="/dashboard" className="flex items-center gap-2">
             <Image
-              src="/logo-icon.png"
-              alt="Speeky"
-              width={28}
-              height={28}
-              className="h-7 w-7 transition-all dark:brightness-0 dark:invert"
+              src="/speeky-consolidated-logo.png"
+              alt="Speeky powered by Mazik Global"
+              width={277}
+              height={100}
+              className="speeky-logo-heartbeat h-12 w-auto max-w-[13rem] transition-all dark:brightness-0 dark:invert"
             />
-            <span className="hidden font-serif text-h2 font-semibold tracking-tight text-primary dark:text-white lg:block">
-              Speeky
-            </span>
           </Link>
-          <p className="hidden pl-9 text-xs font-medium tracking-wide text-muted-foreground lg:block">
-            AI COACH
-          </p>
         </div>
         <NavLinks expanded={false} />
         <ProfileLink expanded={false} />
@@ -221,19 +215,16 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             className="absolute inset-0 animate-fade-in bg-foreground/40"
             onClick={onMobileClose}
           />
-          <aside className="relative flex h-full w-72 max-w-[80vw] animate-slide-in-left flex-col overflow-y-auto border-r border-border bg-surface-elevated px-4 py-6 shadow-xl">
+          <aside className="relative flex h-full w-72 max-w-[80vw] animate-slide-in-left flex-col overflow-y-auto border-r border-border bg-[linear-gradient(180deg,hsl(var(--surface-elevated)),hsl(var(--surface))),radial-gradient(90%_28%_at_0%_0%,hsl(var(--primary)/0.12),transparent_60%),radial-gradient(70%_24%_at_100%_100%,hsl(var(--accent)/0.08),transparent_60%)] px-4 py-6 shadow-xl">
             <div className="flex items-center justify-between">
               <Link href="/dashboard" className="flex items-center gap-2" onClick={onMobileClose}>
                 <Image
-                  src="/logo-icon.png"
-                  alt="Speeky"
-                  width={28}
-                  height={28}
-                  className="h-7 w-7 dark:brightness-0 dark:invert"
+                  src="/speeky-consolidated-logo.png"
+                  alt="Speeky powered by Mazik Global"
+                  width={277}
+                  height={100}
+                  className="speeky-logo-heartbeat h-12 w-auto max-w-[13rem] dark:brightness-0 dark:invert"
                 />
-                <span className="font-serif text-h2 font-semibold tracking-tight text-primary dark:text-white">
-                  Speeky
-                </span>
               </Link>
               <button
                 type="button"

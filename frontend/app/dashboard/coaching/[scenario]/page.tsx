@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "react-toastify";
 import {
   CheckCircle2,
   Mic,
   MicOff,
+  Phone,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
@@ -15,6 +17,13 @@ import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
 import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
 import { MilestoneCelebrationModal } from "@/components/dashboard/MilestoneCelebrationModal";
+
+// livekit-client is ~150KB — load it only once a user actually opens a call,
+// not on every visit to this page.
+const LiveCallModal = dynamic(
+  () => import("@/components/common/LiveCallModal").then((m) => m.LiveCallModal),
+  { ssr: false },
+);
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
@@ -67,6 +76,7 @@ export default function CoachingSessionPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [voiceStatus, setVoiceStatus] = React.useState("");
+  const [liveCallOpen, setLiveCallOpen] = React.useState(false);
   const scrollRef = useAutoScroll(
     step.name === "roleplay" ? step.turns.length : 0,
   );
@@ -89,7 +99,9 @@ export default function CoachingSessionPage() {
   }, [step]);
   const getWsUrl = React.useCallback(() => {
     if (!roleplaySessionIdRef.current) return null;
-    return buildVoiceWsUrl(`/coaching/${roleplaySessionIdRef.current}/voice-ws`);
+    return buildVoiceWsUrl(
+      `/coaching/${roleplaySessionIdRef.current}/voice-ws`,
+    );
   }, []);
   const onTranscript = React.useCallback((text: string) => {
     setChatInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
@@ -118,7 +130,9 @@ export default function CoachingSessionPage() {
   // is the active practice session, crediting lifetime practice time and
   // surfacing any milestone that unlocks mid-session.
   const activePracticeSessionId =
-    step.name === "draft" || step.name === "roleplay" ? step.session.session_id : null;
+    step.name === "draft" || step.name === "roleplay"
+      ? step.session.session_id
+      : null;
   const { newlyUnlocked, dismissMilestone } = usePracticeTimePing(
     "coaching",
     activePracticeSessionId,
@@ -296,6 +310,30 @@ export default function CoachingSessionPage() {
     }
   }
 
+  // Re-fetches turns from the backend after a Live Call ends — the call's turns
+  // already landed via the same roleplay_turn path a typed message uses, this just
+  // pulls them into view.
+  async function refreshRoleplayTurns() {
+    if (step.name !== "roleplay") return;
+    try {
+      const state = await getCoachingSessionState(step.session.session_id);
+      setStep((prev) =>
+        prev.name === "roleplay"
+          ? {
+              ...prev,
+              turns: state.turns,
+              transcript: state.turns
+                .filter((t) => t.role === "user")
+                .map((t) => t.content)
+                .join(" "),
+            }
+          : prev,
+      );
+    } catch {
+      toast.error("Couldn't refresh the transcript.");
+    }
+  }
+
   async function handleEndRoleplay() {
     if (step.name !== "roleplay") return;
     if (isVoiceActive) await stopVoice();
@@ -348,7 +386,9 @@ export default function CoachingSessionPage() {
         {gate}
         <MilestoneCelebrationModal
           milestone={newlyUnlocked[0] ?? null}
-          onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
+          onClose={() =>
+            newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)
+          }
         />
         <div>
           <h1 className="font-serif text-h2 font-semibold text-foreground">
@@ -427,9 +467,21 @@ export default function CoachingSessionPage() {
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-4">
         {gate}
+        {liveCallOpen ? (
+          <LiveCallModal
+            feature="coaching"
+            sessionId={step.session.session_id}
+            open={liveCallOpen}
+            onClose={() => setLiveCallOpen(false)}
+            onEndSession={handleEndRoleplay}
+            onCallEnded={() => void refreshRoleplayTurns()}
+          />
+        ) : null}
         <MilestoneCelebrationModal
           milestone={newlyUnlocked[0] ?? null}
-          onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
+          onClose={() =>
+            newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)
+          }
         />
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="font-serif text-h2 font-semibold text-foreground">
@@ -494,7 +546,7 @@ export default function CoachingSessionPage() {
               Feedback&quot; to see your results.
             </p>
           ) : (
-            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
+            <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center">
               <input
                 type="text"
                 value={chatInput}
@@ -506,38 +558,50 @@ export default function CoachingSessionPage() {
                   }
                 }}
                 placeholder="Type your response..."
-                className="h-11 min-w-0 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+                className="h-11 min-w-0 sm:flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
               />
-              <Button
-                size="md"
-                loading={isSubmitting}
-                disabled={!chatInput.trim()}
-                onClick={handleSendChat}
-              >
-                Send
-              </Button>
-              {isVoiceActive ? (
+              <div className="flex justify-between">
+                <Button
+                  size="md"
+                  loading={isSubmitting}
+                  disabled={!chatInput.trim()}
+                  onClick={handleSendChat}
+                >
+                  Send
+                </Button>
+                {isVoiceActive ? (
+                  <Button
+                    size="md"
+                    variant="outline"
+                    className="voice-listening-button"
+                    loading={isStoppingVoice}
+                    onClick={() => void stopVoice()}
+                  >
+                    <MicOff className="h-4 w-4" aria-hidden="true" />
+                    Stop Voice
+                  </Button>
+                ) : (
+                  <Button
+                    size="md"
+                    variant="outline"
+                    loading={isConnectingVoice}
+                    onClick={() => void runWithVoiceReadiness(startVoice)}
+                  >
+                    <Mic className="h-4 w-4" aria-hidden="true" />
+                    Start Voice
+                  </Button>
+                )}
                 <Button
                   size="md"
                   variant="outline"
-                  className="voice-listening-button"
-                  loading={isStoppingVoice}
-                  onClick={() => void stopVoice()}
+                  onClick={() =>
+                    void runWithVoiceReadiness(() => setLiveCallOpen(true))
+                  }
                 >
-                  <MicOff className="h-4 w-4" aria-hidden="true" />
-                  Stop Voice
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                  Live Call
                 </Button>
-              ) : (
-                <Button
-                  size="md"
-                  variant="outline"
-                  loading={isConnectingVoice}
-                  onClick={() => void runWithVoiceReadiness(startVoice)}
-                >
-                  <Mic className="h-4 w-4" aria-hidden="true" />
-                  Start Voice
-                </Button>
-              )}
+              </div>
             </div>
           )}
           {liveVoiceStatus ? (
@@ -550,7 +614,11 @@ export default function CoachingSessionPage() {
             </p>
           ) : null}
           {livePreview ? (
-            <p role="status" aria-live="polite" className="text-sm italic text-muted-foreground">
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm italic text-muted-foreground"
+            >
               {livePreview}
             </p>
           ) : null}
@@ -568,9 +636,16 @@ export default function CoachingSessionPage() {
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
         <h1 className="mt-3 font-serif text-h2 font-semibold">
-          {Math.round(result.scores.professional_tone ?? 0)}/100 Professional
-          Tone
+          {result.scores.professional_tone !== null
+            ? `${Math.round(result.scores.professional_tone)}/100 Professional Tone`
+            : "Not scored"}
         </h1>
+        {result.scoring_status === "unavailable" && (
+          <p className="mt-2 text-sm text-primary-foreground/85">
+            Scoring is temporarily unavailable — your submission is saved. The
+            feedback below still applies.
+          </p>
+        )}
         <p className="mt-2 text-sm text-primary-foreground/85">
           {result.summary}
         </p>

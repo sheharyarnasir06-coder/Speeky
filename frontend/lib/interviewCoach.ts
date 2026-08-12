@@ -45,7 +45,11 @@ export interface SessionFeedback {
   mode: InterviewMode;
   closing_message: string;
   round_scorecards: RoundScorecard[];
-  overall_score: number;
+  /** Null when nothing could be graded — no answers given, or the grader was
+   *  unreachable. Render `scoring_status` instead of a number; a session with no
+   *  answers used to report 85. */
+  overall_score: number | null;
+  scoring_status: "scored" | "insufficient_evidence" | "unavailable";
   actionable_script: string;
   ended_at: string;
 }

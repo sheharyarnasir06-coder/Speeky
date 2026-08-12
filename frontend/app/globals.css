@@ -31,33 +31,33 @@
     /* #D6E8ED — muted cyan-blue border */
     --input: 196 28% 88%;
     /* #D6E8ED */
-    --ring: 200 100% 22%;
+    --ring: 195 72% 31%;
     /* #004B70 */
 
     /* Royal blue. Hue MUST stay in the 224 family so the focus ring (--ring) and the
        control it rings read as the same colour. Previously --primary sat on hue 200,
        which rendered #004B70 (teal) while every comment and --ring said #00246E. */
-    --primary: 200 100% 22%;
+    --primary: 195 72% 31%;
     /* #004B70 */
-    --primary-hover: 200 66% 33%;
+    --primary-hover: 195 76% 26%;
     /* #006A9C */
     --primary-foreground: 0 0% 100%;
     /* #FFFFFF */
 
-    --secondary: 192 55% 91%;
+    --secondary: 202 62% 92%;
     /* #D5EDF2 — soft steel-cyan wash */
-    --secondary-foreground: 196 82% 18%;
+    --secondary-foreground: 201 61% 27%;
     /* #065368 */
 
-    --accent: 190 82% 31%;
+    --accent: 134 48% 38%;
     /* #0E7490 — Steel Cyan */
-    --accent-hover: 190 78% 37%;
+    --accent-hover: 134 52% 32%;
     /* #1189A8 */
     --accent-foreground: 0 0% 100%;
     /* #FFFFFF */
 
     /* #147B3F — `text-success` on `bg-success/10` measured 4.43:1 at 29%. */
-    --success: 142 72% 28%;
+    --success: 134 48% 38%;
     /* #15803D */
     /* #A25907 — the binding constraint is a Badge's own tint, not the page
        background: `text-warning` on `bg-warning/10` measured 4.07:1 at the
@@ -65,9 +65,9 @@
        comfortably on plain surfaces. */
     --warning: 32 92% 33%;
     /* #B45309 */
-    --danger: 0 74% 42%;
+    --danger: 2 84% 55%;
     /* #BB1F1F — darkened so white text clears AA on the filled danger button. */
-    --info: 224 100% 22%;
+    --info: 205 45% 52%;
     /* #00246E — primary as info */
 
     --radius: 0.75rem;
@@ -119,32 +119,32 @@
     /* #222F42 */
     --input: 208 26% 22%;
     /* #222F42 */
-    --ring: 190 42% 58%;
+    --ring: 195 58% 60%;
     /* #52B8CC */
 
-    --primary: 224 55% 72%;
+    --primary: 195 58% 60%;
     /* #849EC8 — muted dusty blue, pastel */
-    --primary-hover: 224 58% 78%;
+    --primary-hover: 195 62% 68%;
     /* #97AED4 */
-    --primary-foreground: 224 60% 12%;
+    --primary-foreground: 222 47% 8%;
     /* #0A1538 */
 
     --secondary: 220 32% 18%;
     /* #1C2840 */
-    --secondary-foreground: 224 55% 72%;
+    --secondary-foreground: 205 45% 70%;
     /* #849EC8 */
 
-    --accent: 190 42% 58%;
+    --accent: 134 40% 56%;
     /* #52B8CC — muted steel cyan for dark */
-    --accent-hover: 190 42% 65%;
+    --accent-hover: 134 44% 64%;
     /* #6BC6D8 */
-    --accent-foreground: 190 82% 9%;
+    --accent-foreground: 136 42% 10%;
     /* #041E28 */
 
-    --success: 142 45% 42%;
+    --success: 134 40% 56%;
     --warning: 32 75% 50%;
-    --danger: 0 62% 46%;
-    --info: 224 55% 72%;
+    --danger: 2 74% 58%;
+    --info: 205 45% 62%;
 
     --radius: 0.75rem;
 
@@ -490,7 +490,8 @@
 @media (prefers-reduced-motion: reduce) {
 
   .voice-listening-button,
-  .voice-listening-button::after {
+  .voice-listening-button::after,
+  .speeky-logo-heartbeat {
     animation: none;
   }
 }
@@ -504,11 +505,66 @@
   }
 
   50% {
-    transform: scale(1.1);
+    transform: scale(1.12);
     opacity: 0.82;
   }
 }
 
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.page-enter {
+  animation: page-enter 200ms ease-out;
+}
+
 .flame-active {
   animation: flame-flicker 1.8s ease-in-out infinite;
+}
+
+@keyframes speeky-logo-heartbeat {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  12% {
+    transform: scale(1.045);
+  }
+
+  24% {
+    transform: scale(1);
+  }
+
+  36% {
+    transform: scale(1.025);
+  }
+
+  48% {
+    transform: scale(1);
+  }
+}
+
+.speeky-logo-heartbeat {
+  animation: speeky-logo-heartbeat 3.2s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+
+@keyframes speeky-bird-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-6px) rotate(4deg);
+  }
 }

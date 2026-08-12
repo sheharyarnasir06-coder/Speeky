@@ -28,7 +28,7 @@ from fastapi import Depends, WebSocket
 from fastapi.responses import JSONResponse
 from prisma import Json
 
-from lib import explore_sessions, llm_client, prompts, voice_ws
+from lib import explore_sessions, llm_client, prompts, relevance, voice_ws
 from lib.prisma_client import db
 from middlewares.auth_middleware import require_admin, require_auth, ws_require_auth
 from schemas.scenario_schemas import (
@@ -98,6 +98,12 @@ def _vocab_coverage(turns: List[Dict], target_vocab: List[str]) -> Dict[str, Lis
 
 
 def _offline_politeness(turns: List[Dict]) -> float:
+    """Marker-count politeness, used ONLY for tip selection — never as a score.
+
+    It used to start at 78.0 and adjust, so a learner who said nothing recognisable was
+    graded "politely spoken" at 78. See `grade_session`: the graded politeness number now
+    comes from the LLM or does not exist.
+    """
     user_text = " ".join(t["content"] for t in turns if t.get("role") == "user").lower()
     score = 78.0
     for m in _POLITE_MARKERS:
@@ -126,51 +132,63 @@ def _offline_tips(scenario_meta: Dict, turns: List[Dict], vocab_used: List[str],
     return tips[:3]
 
 
-def offline_grade(scenario_meta: Dict, turns: List[Dict], vocab_used: List[str]) -> Dict:
-    """Deterministic grader used when Groq isn't configured/reachable."""
-    met_goal = True
-    if scenario_meta.get("goal_type") == "negotiation":
-        # Conservative heuristic: goal counted met only if the learner engaged in at
-        # least a couple of back-and-forth turns (i.e. didn't just accept immediately).
-        user_turns = [t for t in turns if t.get("role") == "user"]
-        met_goal = len(user_turns) >= 2
-    summary = (
-        "Good engagement with the scenario."
-        if vocab_used
-        else "Try working more of the target vocabulary into your responses next time."
-    )
-    tips = _offline_tips(scenario_meta, turns, vocab_used, met_goal)
+def ungraded_result(scenario_meta: Dict, turns: List[Dict], vocab_used: List[str]) -> Dict:
+    """What comes back when the grader can't run: tips and vocabulary, but no politeness
+    number and no verdict on the goal.
+
+    This replaces `offline_grade`, which returned `politeness = _offline_politeness(...)`
+    (base 78) and `met_goal = True` for every non-negotiation scenario — so an empty or
+    hostile session was reported as polite and successful.
+    """
+    tips = _offline_tips(scenario_meta, turns, vocab_used, met_goal=False)
     return {
-        "politeness": _offline_politeness(turns),
-        "met_goal": met_goal,
-        "summary": summary,
+        "politeness": None,
+        "met_goal": None,
+        "summary": "Scoring is temporarily unavailable — your transcript is saved.",
         "suggestion": tips[0],
         "tips": tips,
         # Rewriting prose convincingly needs an LLM — offline mode skips it rather than faking one.
         "original_line": "",
         "polished_line": "",
-        "_source": "offline",
+        "_source": relevance.SOURCE_UNAVAILABLE,
     }
 
 
 async def grade_session(scenario_meta: Dict, turns: List[Dict], vocab_used: List[str]) -> Dict:
     if not llm_client.is_configured():
-        return offline_grade(scenario_meta, turns, vocab_used)
+        return ungraded_result(scenario_meta, turns, vocab_used)
 
     transcript = "\n".join(
         t["content"] for t in turns if t.get("role") == "user"
     )
+
+    # Nothing worth grading — no LLM call, and no politeness score for silence.
+    gate = relevance.evaluate_substance(transcript, scenario_meta.get("intent"))
+    if gate.rejected:
+        tips = _offline_tips(scenario_meta, turns, vocab_used, met_goal=False)
+        return {
+            "politeness": 0.0, "met_goal": False,
+            "summary": "There wasn't enough here to grade — try working through the scenario in full.",
+            "suggestion": tips[0], "tips": tips,
+            "original_line": "", "polished_line": "", "_source": relevance.SOURCE_GATE,
+        }
+
     grading_prompt = prompts.build_scenario_grading_prompt(scenario_meta, transcript, vocab_used)
     try:
         raw = await llm_client.chat_json(
             [{"role": "user", "content": grading_prompt}], temperature=0.2, max_tokens=500
         )
-        met_goal = bool(raw.get("met_goal", True))
+        politeness = relevance._clamp_score(raw.get("politeness"))
+        if politeness is None:
+            logger.warning("SBL grader returned no usable politeness: %r", raw)
+            return ungraded_result(scenario_meta, turns, vocab_used)
+        # Fail low: an omitted verdict is not a passing one.
+        met_goal = bool(raw.get("met_goal", False))
         tips = [str(t).strip() for t in (raw.get("tips") or []) if str(t).strip()][:3]
         if not tips:
             tips = _offline_tips(scenario_meta, turns, vocab_used, met_goal)
         return {
-            "politeness": max(0.0, min(100.0, float(raw.get("politeness", 0) or 0))),
+            "politeness": politeness,
             "met_goal": met_goal,
             "summary": raw.get("summary", ""),
             "suggestion": raw.get("suggestion", "") or tips[0],
@@ -180,8 +198,8 @@ async def grade_session(scenario_meta: Dict, turns: List[Dict], vocab_used: List
             "_source": "llm",
         }
     except (llm_client.LLMError, TypeError, ValueError) as e:
-        logger.warning("Groq SBL grading failed (%s); using offline grader", e)
-        return offline_grade(scenario_meta, turns, vocab_used)
+        logger.warning("Groq SBL grading failed (%s); session will be reported ungraded", e)
+        return ungraded_result(scenario_meta, turns, vocab_used)
 
 
 # ── Scenario registry (built-in + admin custom) ────────────────────────────────
@@ -397,7 +415,12 @@ async def _finalize_session(session_id: str, user_id: str, meta: Dict, target_vo
     coverage = _vocab_coverage(turns, target_vocab)
     grade = await grade_session(meta, turns, coverage["used"])
     vocabulary_score = round(100 * len(coverage["used"]) / max(1, len(target_vocab)), 2)
-    confidence = round((grade["politeness"] + vocabulary_score) / 2, 2)
+    # No politeness grade means no confidence score. Averaging vocabulary against a
+    # missing number would hand back half marks for an ungraded session.
+    scoring_status = (relevance.STATUS_SCORED if grade["politeness"] is not None
+                      else relevance.STATUS_UNAVAILABLE)
+    confidence = (round((grade["politeness"] + vocabulary_score) / 2, 2)
+                  if grade["politeness"] is not None else None)
 
     await db.scenariosession.update(
         where={"id": session_id},
@@ -428,7 +451,9 @@ async def _finalize_session(session_id: str, user_id: str, meta: Dict, target_vo
         await _record_session(user_id, RecordSessionRequest(
             session_id=session_id, session_type="scenario",
             flags_seen=flags, topic_or_mode=meta.get("label"),
-            overall_score=int(round(confidence)),
+            # Omitted when ungraded: session_memory treats >= 80 as a strength, and an
+            # ungraded session is not evidence of anything.
+            overall_score=int(round(confidence)) if confidence is not None else None,
         ))
     except Exception:
         pass  # best-effort — scenario scoring must not fail because memory logging did
@@ -440,6 +465,7 @@ async def _finalize_session(session_id: str, user_id: str, meta: Dict, target_vo
     return {
         "session_id": session_id,
         "status": status,
+        "scoring_status": scoring_status,
         "scores": {"politeness": grade["politeness"], "vocabulary": vocabulary_score, "confidence": confidence},
         "vocab_used": coverage["used"],
         "vocab_missing": coverage["missing"],

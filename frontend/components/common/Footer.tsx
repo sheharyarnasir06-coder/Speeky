@@ -49,18 +49,14 @@ export function Footer() {
       <div className="container py-16">
         <div className="grid grid-cols-2 gap-10 sm:grid-cols-3 lg:grid-cols-5">
           <div className="col-span-2 flex flex-col gap-4 lg:col-span-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center">
               <Image
-                src="/logo-icon.png"
-                alt=""
-                width={28}
-                height={28}
-                aria-hidden="true"
-                className="h-7 w-7"
+                src="/speeky-consolidated-logo.png"
+                alt="Speeky powered by Mazik Global"
+                width={277}
+                height={100}
+                className="speeky-logo-heartbeat h-12 w-auto dark:brightness-0 dark:invert"
               />
-              <span className="font-serif text-lg font-semibold tracking-tight text-foreground">
-                Speeky
-              </span>
             </div>
             <p className="text-sm text-muted-foreground">
               An AI communication coach for speaking confidence.

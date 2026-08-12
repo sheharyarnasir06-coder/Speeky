@@ -83,6 +83,9 @@ export interface AssessmentSummary {
   assessment_id: string;
   user_id: string;
   display_name: string;
+  /** "scored" once a real grade exists. An assessment whose relevance grader could not
+   *  run never reaches this shape at all — it comes back as AssessmentProcessing (202). */
+  scoring_status: "scored" | "unavailable";
   completed_at: string;
   learning_level: { level: string; label: string };
   confidence_score: { score: number; display: string; message: string };
@@ -174,6 +177,14 @@ export function submitAssessmentResponse(
     audio_features?: {
       duration_seconds: number;
       word_timings?: { word: string; start: number; end: number }[];
+      /** Per-VAD-utterance timings. Preferred over the flat fields: the backend combines
+       *  them with aggregate_audio_turns so the silence between utterances is not scored
+       *  as hesitation inside one. */
+      turns?: {
+        transcript: string;
+        duration_seconds: number;
+        word_timings: { word: string; start: number; end: number }[];
+      }[];
     };
   }
 ) {

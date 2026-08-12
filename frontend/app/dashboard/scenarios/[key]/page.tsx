@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
+import { toast } from "react-toastify";
 import { SessionRating } from "@/components/dashboard/SessionRating";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,6 +11,7 @@ import {
   Lock,
   Mic,
   MicOff,
+  Phone,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
@@ -16,6 +19,13 @@ import { Button } from "@/components/ui/button";
 import { AiCoachAvatar } from "@/components/common/AiCoachAvatar";
 import { UserChatAvatar } from "@/components/common/UserChatAvatar";
 import { useVoiceReadinessGate } from "@/components/common/VoiceReadinessGate";
+
+// livekit-client is ~150KB — load it only once a user actually opens a call,
+// not on every visit to this page.
+const LiveCallModal = dynamic(
+  () => import("@/components/common/LiveCallModal").then((m) => m.LiveCallModal),
+  { ssr: false },
+);
 import { MilestoneCelebrationModal } from "@/components/dashboard/MilestoneCelebrationModal";
 import { ApiError } from "@/lib/api";
 import {
@@ -68,6 +78,7 @@ export default function ScenarioSessionPage() {
   const [error, setError] = React.useState<string | null>(null);
   const [audioMode, setAudioMode] = React.useState(false);
   const [greeting, setGreeting] = React.useState<string | null>(null);
+  const [liveCallOpen, setLiveCallOpen] = React.useState(false);
   const chatTurns = step.name === "chat" ? step.turns : null;
   const scrollRef = useAutoScroll(chatTurns?.length ?? 0);
 
@@ -151,12 +162,17 @@ export default function ScenarioSessionPage() {
               setStep({
                 name: "chat",
                 session: {
-                  session_id: state.session_id, scenario_key: state.scenario_key,
-                  label: detail.label, persona: detail.persona, intent: detail.intent,
-                  target_vocab: detail.target_vocab, opening_message: "",
+                  session_id: state.session_id,
+                  scenario_key: state.scenario_key,
+                  label: detail.label,
+                  persona: detail.persona,
+                  intent: detail.intent,
+                  target_vocab: detail.target_vocab,
+                  opening_message: "",
                 },
                 turns: state.turns.map((t) => ({
-                  role: t.role === "user" ? "user" : "assistant", content: t.content,
+                  role: t.role === "user" ? "user" : "assistant",
+                  content: t.content,
                 })),
               });
               return;
@@ -263,6 +279,29 @@ export default function ScenarioSessionPage() {
     return () => clearTimeout(timer);
   }, [step, chatInput, isSubmitting, sendTurn]);
 
+  // Re-fetches turns from the backend after a Live Call ends — the call's turns
+  // already landed via the same send_turn path a typed message uses, this just
+  // pulls them into view.
+  async function refreshScenarioTurns() {
+    if (step.name !== "chat") return;
+    try {
+      const state = await getScenarioSessionState(step.session.session_id);
+      setStep((prev) =>
+        prev.name === "chat"
+          ? {
+              ...prev,
+              turns: state.turns.map((t) => ({
+                role: t.role === "user" ? "user" : "assistant",
+                content: t.content,
+              })),
+            }
+          : prev,
+      );
+    } catch {
+      toast.error("Couldn't refresh the transcript.");
+    }
+  }
+
   async function handleEnd() {
     if (step.name !== "chat") return;
     if (isVoiceActive) await stopVoice();
@@ -329,7 +368,10 @@ export default function ScenarioSessionPage() {
         </div>
         {greeting ? (
           <div className="flex items-start gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <Sparkles
+              className="mt-0.5 h-4 w-4 shrink-0 text-primary"
+              aria-hidden="true"
+            />
             {greeting}
           </div>
         ) : null}
@@ -368,9 +410,21 @@ export default function ScenarioSessionPage() {
     return (
       <div className="mx-auto flex max-w-2xl flex-col gap-4">
         {gate}
+        {liveCallOpen ? (
+          <LiveCallModal
+            feature="scenario"
+            sessionId={step.session.session_id}
+            open={liveCallOpen}
+            onClose={() => setLiveCallOpen(false)}
+            onEndSession={handleEnd}
+            onCallEnded={() => void refreshScenarioTurns()}
+          />
+        ) : null}
         <MilestoneCelebrationModal
           milestone={newlyUnlocked[0] ?? null}
-          onClose={() => newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)}
+          onClose={() =>
+            newlyUnlocked[0] && dismissMilestone(newlyUnlocked[0].hours)
+          }
         />
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="font-serif text-h2 font-semibold text-foreground">
@@ -423,7 +477,9 @@ export default function ScenarioSessionPage() {
                     : "flex max-w-[86%] items-start gap-2"
                 }
               >
-                {turn.role === "assistant" ? <AiCoachAvatar className="mt-5" /> : null}
+                {turn.role === "assistant" ? (
+                  <AiCoachAvatar className="mt-5" />
+                ) : null}
                 <div className="min-w-0 flex-1">
                   <span
                     className={cn(
@@ -443,12 +499,14 @@ export default function ScenarioSessionPage() {
                     {turn.content}
                   </div>
                 </div>
-                {turn.role === "user" ? <UserChatAvatar className="mt-5" /> : null}
+                {turn.role === "user" ? (
+                  <UserChatAvatar className="mt-5" />
+                ) : null}
               </div>
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
+          <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center">
             <input
               type="text"
               value={chatInput}
@@ -460,46 +518,68 @@ export default function ScenarioSessionPage() {
                 }
               }}
               placeholder="Type your response..."
-              className="h-11 min-w-0 flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
+              className="h-11 min-w-0 sm:flex-1 rounded-xl border border-input bg-surface px-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/40"
             />
-            <Button
-              size="md"
-              loading={isSubmitting}
-              disabled={!chatInput.trim()}
-              onClick={handleSendChat}
-            >
-              Send
-            </Button>
-            {isVoiceActive ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Button
                 size="md"
-                variant="outline"
-                className="voice-listening-button"
-                loading={isStoppingVoice}
-                onClick={() => void stopVoice()}
+                loading={isSubmitting}
+                disabled={!chatInput.trim()}
+                onClick={handleSendChat}
               >
-                <MicOff className="h-4 w-4" aria-hidden="true" />
-                Stop Voice
+                Send
               </Button>
-            ) : (
-              <Button
-                size="md"
-                variant="outline"
-                loading={isConnectingVoice}
-                onClick={() => void runWithVoiceReadiness(startVoice)}
-              >
-                <Mic className="h-4 w-4" aria-hidden="true" />
-                Start Voice
-              </Button>
-            )}
+              <div className="flex flex-wrap items-center gap-2">
+                {isVoiceActive ? (
+                  <Button
+                    size="md"
+                    variant="outline"
+                    className="voice-listening-button"
+                    loading={isStoppingVoice}
+                    onClick={() => void stopVoice()}
+                  >
+                    <MicOff className="h-4 w-4" aria-hidden="true" />
+                    Stop Voice
+                  </Button>
+                ) : (
+                  <Button
+                    size="md"
+                    variant="outline"
+                    loading={isConnectingVoice}
+                    onClick={() => void runWithVoiceReadiness(startVoice)}
+                  >
+                    <Mic className="h-4 w-4" aria-hidden="true" />
+                    Start Voice
+                  </Button>
+                )}
+                <Button
+                  size="md"
+                  variant="outline"
+                  onClick={() =>
+                    void runWithVoiceReadiness(() => setLiveCallOpen(true))
+                  }
+                >
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                  Live Call
+                </Button>
+              </div>
+            </div>
           </div>
           {voiceStatus ? (
-            <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-muted-foreground"
+            >
               {voiceStatus}
             </p>
           ) : null}
           {livePreview ? (
-            <p role="status" aria-live="polite" className="text-sm italic text-muted-foreground">
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm italic text-muted-foreground"
+            >
               {livePreview}
             </p>
           ) : null}
@@ -517,7 +597,9 @@ export default function ScenarioSessionPage() {
       <div className="animate-fade-up rounded-2xl border border-border bg-gradient-to-br from-primary to-primary-hover p-8 text-center text-primary-foreground shadow-sm">
         <Sparkles className="mx-auto h-6 w-6" aria-hidden="true" />
         <h1 className="mt-3 font-serif text-h2 font-semibold">
-          {Math.round(result.scores.politeness ?? 0)}/100 Politeness
+          {result.scores.politeness !== null
+            ? `${Math.round(result.scores.politeness)}/100 Politeness`
+            : "Not scored"}
         </h1>
         <p className="mt-2 text-sm text-primary-foreground/85">
           {result.summary}
@@ -608,12 +690,20 @@ export default function ScenarioSessionPage() {
             Tips for Next Time
           </h2>
           <ul className="mt-3 flex flex-col gap-2">
-            {(result.tips.length > 0 ? result.tips : [result.suggestion]).map((tip, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" />
-                {tip}
-              </li>
-            ))}
+            {(result.tips.length > 0 ? result.tips : [result.suggestion]).map(
+              (tip, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 text-sm text-muted-foreground"
+                >
+                  <span
+                    className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                    aria-hidden="true"
+                  />
+                  {tip}
+                </li>
+              ),
+            )}
           </ul>
         </div>
       ) : null}

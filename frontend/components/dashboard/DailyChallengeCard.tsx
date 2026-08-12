@@ -57,9 +57,17 @@ export function DailyChallengeCard() {
   const done = status?.completed_today ?? false;
 
   return (
-    <div className="flex animate-fade-up flex-col justify-between gap-6 rounded-2xl bg-gradient-to-br from-accent to-accent/80 p-6 text-accent-foreground shadow-sm transition-transform duration-200 hover:-translate-y-0.5">
+    <div className="relative flex animate-fade-up flex-col justify-between gap-6 overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_88%_18%,hsl(var(--accent)/0.30),transparent_28%),radial-gradient(circle_at_8%_105%,hsl(var(--danger)/0.20),transparent_30%),linear-gradient(135deg,hsl(var(--primary)/0.88),hsl(var(--primary)/0.66))] p-6 text-primary-foreground shadow-sm transition-transform duration-200 hover:-translate-y-0.5">
+      <span
+        aria-hidden="true"
+        className="absolute right-5 top-5 flex gap-1.5"
+      >
+        <span className="h-2 w-2 rounded-full bg-accent/80" />
+        <span className="h-2 w-2 rounded-full bg-primary-foreground/60" />
+        <span className="h-2 w-2 rounded-full bg-danger/80" />
+      </span>
       <div>
-        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-accent-foreground/80">
+        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground/80">
           <Flame className={cn("h-4 w-4", done && "flame-active fill-current")} aria-hidden="true" />
           Daily Streak
         </span>
@@ -67,12 +75,12 @@ export function DailyChallengeCard() {
           <span key={status?.current_streak ?? "pending"} className="animate-scale-in text-5xl font-bold tracking-tight">
             {status?.current_streak ?? "–"}
           </span>
-          <span className="text-lg text-accent-foreground/80">Days</span>
+          <span className="text-lg text-primary-foreground/80">Days</span>
         </p>
       </div>
 
       <div>
-        <p className="text-sm text-accent-foreground/90">
+        <p className="text-sm text-primary-foreground/90">
           {done
             ? "Today's challenge is complete — nice work!"
             : `Talk with your AI coach for ${status?.required_minutes ?? 5} minutes to keep your streak alive.`}

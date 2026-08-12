@@ -8,7 +8,12 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/ui/pagination";
 import { ApiError } from "@/lib/api";
-import { listUsers, transferSuperAdmin, updateUserRole, type UsersPage } from "@/lib/adminUsers";
+import {
+  listUsers,
+  transferSuperAdmin,
+  updateUserRole,
+  type UsersPage,
+} from "@/lib/adminUsers";
 import { useAuth } from "@/contexts/AuthContext";
 
 const PAGE_SIZE = 10;
@@ -40,9 +45,18 @@ export default function AdminUsersPage() {
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
 
   const refresh = React.useCallback(() => {
-    listUsers({ page, pageSize: PAGE_SIZE, role: role || undefined, search: search || undefined })
+    listUsers({
+      page,
+      pageSize: PAGE_SIZE,
+      role: role || undefined,
+      search: search || undefined,
+    })
       .then(setData)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't load users."));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : "Couldn't load users.",
+        ),
+      );
   }, [page, role, search]);
 
   React.useEffect(() => {
@@ -60,7 +74,11 @@ export default function AdminUsersPage() {
       refresh();
       toast.success("Promoted to Admin.");
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't promote this account.");
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't promote this account.",
+      );
     } finally {
       setBusyId(null);
     }
@@ -73,7 +91,9 @@ export default function AdminUsersPage() {
       refresh();
       toast.success("Admin access revoked.");
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't revoke this account.");
+      toast.error(
+        err instanceof ApiError ? err.message : "Couldn't revoke this account.",
+      );
     } finally {
       setBusyId(null);
     }
@@ -92,7 +112,11 @@ export default function AdminUsersPage() {
       refresh();
       toast.success(`${targetName} is now the Super Admin.`);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't transfer Super Admin.");
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't transfer Super Admin.",
+      );
     } finally {
       setBusyId(null);
     }
@@ -116,8 +140,9 @@ export default function AdminUsersPage() {
           Manage Users
         </h1>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-          Every learner and admin account. Promote to Admin, revoke Admin access, or transfer
-          Super Admin ownership — only one account holds it at a time.
+          Every learner and admin account. Promote to Admin, revoke Admin
+          access, or transfer Super Admin ownership — only one account holds it
+          at a time.
         </p>
       </div>
 
@@ -148,8 +173,8 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-border bg-surface-elevated">
-        <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto rounded-2xl border border-border bg-surface-elevated ">
+        <table key={data?.page} className="w-full text-left text-sm page-enter">
           <thead className="border-b border-border bg-surface text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-3">Name</th>
@@ -164,14 +189,23 @@ export default function AdminUsersPage() {
               const isSelf = u.id === user?.id;
               const busy = busyId === u.id;
               return (
-                <tr key={u.id} className="border-b border-border last:border-0">
+                <tr
+                  key={u.id}
+                  className="border-b border-border last:border-0 transition-colors duration-200 hover:bg-muted/40"
+                >
                   <td className="px-4 py-3 font-medium text-foreground">
                     {u.name}
-                    {isSelf ? <span className="ml-1.5 text-xs text-muted-foreground">(you)</span> : null}
+                    {isSelf ? (
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        (you)
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
                   <td className="px-4 py-3">
-                    <Badge tone={ROLE_TONE[u.role] ?? "neutral"}>{u.role}</Badge>
+                    <Badge tone={ROLE_TONE[u.role] ?? "neutral"}>
+                      {u.role}
+                    </Badge>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {new Date(u.createdAt).toLocaleDateString()}
@@ -179,13 +213,23 @@ export default function AdminUsersPage() {
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
                       {u.role === "USER" ? (
-                        <Button size="sm" variant="outline" loading={busy} onClick={() => handlePromote(u.id)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          loading={busy}
+                          onClick={() => handlePromote(u.id)}
+                        >
                           Promote to Admin
                         </Button>
                       ) : null}
                       {u.role === "ADMIN" ? (
                         <>
-                          <Button size="sm" variant="outline" loading={busy} onClick={() => handleRevoke(u.id)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            loading={busy}
+                            onClick={() => handleRevoke(u.id)}
+                          >
                             Revoke Admin
                           </Button>
                           <Button
@@ -193,14 +237,20 @@ export default function AdminUsersPage() {
                             variant="ghost"
                             loading={busy}
                             onClick={() => handleTransfer(u.id, u.name)}
+                            className="group transition-all duration-150 hover:-translate-y-0.5 active:scale-[0.98]"
                           >
-                            <Crown className="h-4 w-4" aria-hidden="true" />
+                            <Crown
+                              className="h-4 w-4 transition-transform duration-200 group-hover:rotate-6"
+                              aria-hidden="true"
+                            />
                             Make Super Admin
                           </Button>
                         </>
                       ) : null}
                       {u.role === "SUPER_ADMIN" && !isSelf ? (
-                        <span className="text-xs text-muted-foreground">Current Super Admin</span>
+                        <span className="text-xs text-muted-foreground">
+                          Current Super Admin
+                        </span>
                       ) : null}
                     </div>
                   </td>
@@ -209,7 +259,10 @@ export default function AdminUsersPage() {
             })}
             {data && data.users.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                <td
+                  colSpan={5}
+                  className="px-4 py-8 text-center text-muted-foreground"
+                >
                   No users match this filter.
                 </td>
               </tr>
@@ -219,7 +272,12 @@ export default function AdminUsersPage() {
       </div>
 
       {data ? (
-        <Pagination page={data.page} pageSize={data.page_size} total={data.total} onPageChange={setPage} />
+        <Pagination
+          page={data.page}
+          pageSize={data.page_size}
+          total={data.total}
+          onPageChange={setPage}
+        />
       ) : null}
     </div>
   );

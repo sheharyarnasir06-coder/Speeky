@@ -51,6 +51,25 @@ def _get_vad_model():
     return _vad_model
 
 
+def _intensity_variation_db(prosody: "prosody_engine.ProsodyData") -> float:
+    """Spread of the intensity contour over audible frames, in dB.
+
+    Dynamic range is the other half of vocal arousal: pitch range says how much the voice moves
+    up and down, this says how much it moves loud and soft. A monotone-but-loud delivery and an
+    animated one are indistinguishable on pitch alone.
+
+    Frames below the 10th percentile are dropped — silence and room tone would otherwise
+    dominate the spread and make every clip look dynamic.
+    """
+    intensity = prosody.intensity_db
+    if intensity is None or len(intensity) < 4:
+        return 0.0
+    audible = intensity[intensity > float(np.percentile(intensity, 10))]
+    if len(audible) < 4:
+        return 0.0
+    return float(np.std(audible))
+
+
 def _transcribe(waveform: np.ndarray, mode: str) -> dict:
     """Runs on the executor's thread. Mirrors agent.py's transcribe_plain/timed/full
     tiers exactly (same beam_size/temperature/word_timestamps choices, same "full"
@@ -92,6 +111,12 @@ def _transcribe(waveform: np.ndarray, mode: str) -> dict:
                 "avg_db": round(audio_io.rms_dbfs(waveform), 2),
                 "pitch_range_semitones": round(float(prosody.pitch_range_semitones), 2),
                 "snr_db": round(float(snr_db), 1),
+                # Vocal arousal, for scenario-conditioned register scoring (lib/register_scorer.py).
+                # prosody_engine already computed all of this and used to discard it — a wedding
+                # toast and a business pitch want measurably different energy, and pitch RANGE
+                # alone can't tell a low, steady voice from a high, steady one.
+                "mean_pitch_hz": round(float(prosody.mean_pitch_hz), 1),
+                "intensity_variation_db": round(_intensity_variation_db(prosody), 2),
             },
         }
     if mode == "timed":
@@ -164,10 +189,20 @@ class VoiceSession:
         self._partial_interval_s = partial_interval_s
         self._samples_since_partial = 0
         self._partial_in_flight = False
+        # Latched the first time a send fails because the socket is gone. Everything after that
+        # is wasted work delivered nowhere — see _safe_send.
+        self._send_dead = False
 
     async def push(self, chunk: bytes) -> None:
         """Feed raw int16 PCM bytes off the WebSocket. Buffers to Silero's required
         512-sample window size, then runs VAD inference per window."""
+        # A closed socket still drains: uvicorn queues the PCM frames that were already in
+        # flight when the client vanished, so this loop keeps being fed for a while after the
+        # peer is gone. Without this guard the VAD keeps segmenting and Whisper keeps
+        # transcribing utterances whose transcripts have nowhere to go — several seconds of CPU
+        # per dropped connection, and a wall of send-failure tracebacks in the log.
+        if self._send_dead:
+            return
         samples = np.frombuffer(chunk, dtype=np.int16)
         self._window = np.concatenate([self._window, samples])
         while len(self._window) >= WINDOW_SAMPLES:
@@ -237,13 +272,25 @@ class VoiceSession:
         and close()'s finally-block flushing any in-progress utterance — e.g. the user
         hits Stop mid-utterance, or the browser tab just drops the connection. Sending
         on an already-dead socket must never crash the WS handler, same reasoning as
-        agent.py wrapping publish_data in try/except."""
+        agent.py wrapping publish_data in try/except.
+
+        The first failure latches `_send_dead`, which stops the session doing any further work
+        for a peer that is no longer there. It also keeps the log readable: a single dropped
+        connection used to emit one full traceback per queued utterance *and* per status
+        message, all of them the same expected "client went away" condition."""
+        if self._send_dead:
+            return
         try:
             await self._on_message(message)
         except Exception:
-            # visible by default (INFO) — a silent debug-level swallow here was the bug:
-            # a send failure (dead socket, or anything else) had no way to surface.
-            logger.warning("Voice session message send failed: %s", message.get("type"), exc_info=True)
+            self._send_dead = True
+            # One line, once per connection. Still visible by default — a silent debug-level
+            # swallow here was the original bug — but a traceback per message was the overreaction
+            # to it, since the socket being gone is an ordinary outcome, not a fault.
+            logger.info(
+                "Voice session send failed on %s; peer is gone, ending transcription for this "
+                "connection", message.get("type"),
+            )
         else:
             if message.get("type") == "transcript":
                 logger.info("Sent transcript to frontend: %r", message.get("text"))
@@ -271,7 +318,7 @@ class VoiceSession:
         """Flush whatever utterance was in progress when the socket closed — mirrors
         agent.py's forward_frames() calling vad_stream.end_input(), so speech still in
         progress at Stop time still gets transcribed and sent."""
-        if self._speaking:
+        if self._speaking and not self._send_dead:
             self._speaking = False
             await self._finalize()
 

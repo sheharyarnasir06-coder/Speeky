@@ -19,6 +19,7 @@ import { listCategories, type Category } from "@/lib/categories";
 import { resolveIcon } from "@/lib/icon-map";
 import { useAssessmentAccess } from "@/contexts/AssessmentContext";
 import { ExploreResumeBanner } from "@/components/dashboard/ExploreResumeBanner";
+import { AiScenarioCardArt } from "@/components/common/AiScenarioThumbnail";
 
 function toExploreScenario(scenario: ScenarioListItem, categories: Category[]): ExploreScenario {
   const match = categories.find((c) => c.name === scenario.category);
@@ -30,6 +31,7 @@ function toExploreScenario(scenario: ScenarioListItem, categories: Category[]): 
     description: scenario.intent,
     difficulty:
       scenario.goal_type === "negotiation" ? "Negotiation" : "Roleplay",
+    showAiAvatar: true,
     href: `/dashboard/scenarios/${scenario.key}`,
   };
 }
@@ -125,6 +127,7 @@ export default function ExplorePage() {
               description:
                 "Open-ended conversation practice on any topic, with your AI coach.",
               gated: true,
+              showAiAvatar: true,
             },
             {
               href: "/dashboard/pronunciation",
@@ -132,6 +135,7 @@ export default function ExplorePage() {
               title: "Pronunciation Coach",
               description: "Practice phoneme-targeted sentences and retry the words you miss.",
               gated: true,
+              showAiAvatar: false,
             },
             {
               href: "/dashboard/coaching",
@@ -140,6 +144,7 @@ export default function ExplorePage() {
               description:
                 "Emails, client calls, meetings, and presentations — graded for tone and clarity.",
               gated: true,
+              showAiAvatar: true,
             },
             {
               href: "/dashboard/interview-coach",
@@ -148,6 +153,7 @@ export default function ExplorePage() {
               description:
                 "Standard, panel, case-study, and multi-round mock interviews.",
               gated: false,
+              showAiAvatar: true,
             },
             {
               href: "/dashboard/resume-jd",
@@ -156,6 +162,7 @@ export default function ExplorePage() {
               description:
                 "Upload your resume and a JD to tailor your interview practice.",
               gated: false,
+              showAiAvatar: false,
             },
           ].map((item) => {
             const Icon = item.icon;
@@ -163,7 +170,8 @@ export default function ExplorePage() {
             const card = (
               <div
                 className={cn(
-                  "group flex h-full flex-col justify-between rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
+                  "group relative flex h-full overflow-hidden rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
+                  item.showAiAvatar ? "min-h-[230px] flex-col justify-between sm:pr-[46%]" : "flex-col justify-between",
                   itemUnlocked &&
                     "cursor-pointer hover:-translate-y-1 hover:shadow-md",
                   // Locked state is conveyed by the dashed border and the
@@ -172,7 +180,10 @@ export default function ExplorePage() {
                   !itemUnlocked && "border-dashed bg-surface",
                 )}
               >
-                <div>
+                {item.showAiAvatar ? (
+                  <AiScenarioCardArt title={item.title} locked={!itemUnlocked} />
+                ) : null}
+                <div className="relative z-10">
                   <span className={cn(
                     "flex h-11 w-11 items-center justify-center rounded-xl bg-secondary text-primary transition-transform duration-300 group-hover:scale-110",
                     !itemUnlocked && "opacity-70",
@@ -186,7 +197,7 @@ export default function ExplorePage() {
                     {item.description}
                   </p>
                 </div>
-                <div className="mt-6 flex items-center gap-2 text-sm font-medium text-primary">
+                <div className="relative z-10 mt-6 flex items-center gap-2 text-sm font-medium text-primary">
                   {itemUnlocked ? (
                     <>
                       Start
@@ -253,7 +264,7 @@ export default function ExplorePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {scenarios.map((scenario, index) => {
           const Icon = scenario.icon;
           const locked = !isUnlocked;
@@ -262,14 +273,18 @@ export default function ExplorePage() {
           const card = (
             <div
               className={cn(
-                "group flex h-full flex-col justify-between rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
+                "group relative flex h-full overflow-hidden rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-all duration-200",
+                scenario.showAiAvatar ? "min-h-[230px] flex-col justify-between sm:pr-[46%]" : "flex-col justify-between",
                 clickable &&
                   "cursor-pointer hover:-translate-y-1 hover:shadow-md",
                 // See the note on the card above: container opacity fails AA.
                 locked && "border-dashed bg-surface",
               )}
             >
-              <div>
+              {scenario.showAiAvatar ? (
+                <AiScenarioCardArt title={scenario.title} locked={locked} />
+              ) : null}
+              <div className="relative z-10">
                 <div className="mb-6 flex items-start justify-between">
                   <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary text-primary transition-transform duration-300 group-hover:scale-110">
                     <Icon className="h-5 w-5" aria-hidden="true" />
@@ -288,7 +303,7 @@ export default function ExplorePage() {
                   {scenario.description}
                 </p>
               </div>
-              <div className="mt-6 flex items-center gap-2 text-sm font-medium text-primary">
+              <div className="relative z-10 mt-6 flex items-center gap-2 text-sm font-medium text-primary">
                 {locked ? (
                   <span className="text-muted-foreground">
                     Complete assessment to unlock

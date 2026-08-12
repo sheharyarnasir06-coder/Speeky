@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "./providers";
+import { SpeekyBirdCompanion } from "@/components/common/SpeekyBirdCompanion";
 
 // Configure Fraunces for premium, classic headings
 const fraunces = localFont({
@@ -48,7 +49,10 @@ export default function RootLayout({
         `,
           }}
         />
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <SpeekyBirdCompanion />
+        </Providers>
       </body>
     </html>
   );

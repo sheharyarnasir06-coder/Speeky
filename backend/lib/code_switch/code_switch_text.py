@@ -224,6 +224,18 @@ class TextCodeSwitchDetector:
             or literally echoed the token back) OR if had_error is True.
         """
         try:
+            if not llm_client.is_configured():
+                DEV_DICT = {
+                    "jaldi": "quickly",
+                    "shukriya": "thank you",
+                    "chalo": "let's go",
+                    "kaise": "how",
+                }
+                token_lower = token.strip().lower()
+                if token_lower in DEV_DICT:
+                    return DEV_DICT[token_lower], False
+                return None, True
+
             raw = await llm_client.chat(
                 [{"role": "user", "content": prompts.build_code_switch_translation_prompt(token, context)}],
                 temperature=TRANSLATION_TEMPERATURE,

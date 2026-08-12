@@ -22,7 +22,7 @@ const STATUS_COPY: Record<
   },
   needs_check: {
     label: "Check mic",
-    detail: "Voice not checked",
+    detail: "Recommended",
     dotClass: "bg-warning",
   },
   permission_denied: {

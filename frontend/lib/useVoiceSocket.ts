@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { API_URL } from "./api";
+import { clearVoiceReady } from "./voiceReadiness";
 
 const SAMPLE_RATE = 16000; // must match backend/lib/voice_ws.py's SAMPLE_RATE
 
@@ -17,6 +18,13 @@ export interface VoiceFeatures {
   duration_seconds?: number;
   avg_db?: number;
   pitch_range_semitones?: number;
+  /** Signal-to-noise, dB. The backend has always sent this; it was missing from this type, so
+   *  it never reached the server's `_AgentAnalysis` and `voice_clarity` scored a constant ~85.3
+   *  for every live-voice session. */
+  snr_db?: number;
+  /** Vocal arousal inputs for scenario-conditioned register scoring. */
+  mean_pitch_hz?: number;
+  intensity_variation_db?: number;
 }
 
 // Ceiling for how long stopVoice() waits for an in-flight transcript before giving up
@@ -153,14 +161,38 @@ export function useVoiceSocket(
       // Logged unconditionally (not just on an unexpected code) so an early/abnormal
       // disconnect shows up in devtools instead of silently doing nothing.
       socket.onclose = (event) => {
-        if (event.code !== 1000) {
+        const expected = event.code === 1000;
+        if (!expected) {
           console.warn("[voice] socket closed unexpectedly — code:", event.code, "reason:", event.reason || "(none)");
+          // Tear the capture side down too. Without this the socket was cleared from the UI's
+          // point of view but not from the hook's: socketRef still held the dead socket, so
+          // startVoice()'s `if (socketRef.current) return` guard made "Tap to Record" a no-op
+          // and the session could not be restarted. The AudioWorklet also kept pushing PCM into
+          // a closed socket, and the mic indicator stayed lit.
+          if (socketRef.current === socket) {
+            socketRef.current = null;
+            teardownAudio();
+          }
+          utteranceInFlightRef.current = false;
+          // stopVoice() may be parked on this; release it rather than making it serve the full
+          // 15s timeout for a transcript that is never coming.
+          pendingStopResolveRef.current?.();
         }
         setIsVoiceActive(false);
-        setVoiceStatus("Voice disconnected.");
+        setVoiceStatus(
+          expected ? "Voice disconnected." : "Voice disconnected — tap the mic to start again.",
+        );
       };
 
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let micStream: MediaStream;
+      try {
+
+        // 1st time prompts only else prev-suggestion used.
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        clearVoiceReady(); // mic actually failed mid-session — don't trust the cached "ready" state
+        throw err;
+      }
       micStreamRef.current = micStream;
 
       const audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });

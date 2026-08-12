@@ -161,7 +161,7 @@ export default function AccentAssessmentPage() {
     : null;
 
   return (
-    <div className="mx-auto flex max-w-2xl animate-fade-up flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-3xl animate-fade-up flex-col gap-6 lg:min-h-[calc(100dvh-10rem)] lg:justify-center">
       {gate}
       <div className="flex flex-col gap-1">
         <h1 className="font-serif text-h1 font-semibold text-foreground">
@@ -207,6 +207,21 @@ export default function AccentAssessmentPage() {
             )}
             "
           </p>
+
+          <div className="mt-5 grid grid-cols-3 gap-2" aria-label="Assessment measurements">
+            {[
+              "Rhythm",
+              "Stress",
+              "Clarity",
+            ].map((measurement) => (
+              <span
+                key={measurement}
+                className="rounded-xl border border-primary/10 bg-secondary/55 px-3 py-2 text-center text-xs font-medium text-primary"
+              >
+                {measurement}
+              </span>
+            ))}
+          </div>
 
           <div className="mt-8 flex flex-col items-center gap-4">
             <button

@@ -444,7 +444,7 @@ export default function PronunciationCoachPage() {
   if (step.name === "practice") {
     const { session } = step;
     return (
-      <div className="mx-auto flex max-w-2xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 lg:min-h-[calc(100dvh-10rem)] lg:justify-center">
         {gate}
         <div>
           <h1 className="font-serif text-h2 font-semibold text-foreground">
